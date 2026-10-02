@@ -1,10 +1,12 @@
 mod body;
+mod budget;
 
 use std::num::NonZeroU8;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub use body::ReplayBody;
+pub use budget::{Budget, Permit as BudgetPermit, hold_until_complete};
 
 use crate::cel::Expression;
 use crate::store::HasExpressions;
@@ -43,6 +45,10 @@ pub struct Policy {
 	/// Defaults to 64KiB. Values above 32MiB are clamped to 32MiB.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub max_buffer_size: Option<usize>,
+	/// Caps concurrent retries relative to concurrent requests, so that a failing backend does
+	/// not see its load multiplied by retries. When unset, retries are not limited.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub budget: Option<Budget>,
 }
 
 /// Request body bytes buffered for replay when `maxBufferSize` is unset.
@@ -122,6 +128,23 @@ mod tests {
 		.unwrap();
 		assert!(pol.precondition.is_none());
 		assert!(pol.condition.is_none());
+		assert!(pol.budget.is_none());
+	}
+
+	#[test]
+	fn parses_budget() {
+		let pol: Policy = serde_json::from_value(serde_json::json!({
+			"attempts": 2,
+			"codes": [503],
+			"budget": {
+				"budgetPercent": 12.5,
+				"minRetryConcurrency": 1,
+			},
+		}))
+		.unwrap();
+		let budget = pol.budget.unwrap();
+		assert_eq!(budget.budget_percent, 12.5);
+		assert_eq!(budget.min_retry_concurrency, 1);
 	}
 
 	#[test]

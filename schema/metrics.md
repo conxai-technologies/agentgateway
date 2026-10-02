@@ -18,6 +18,7 @@
 | `agentgateway_requests_total` | Counter | — | The total number of HTTP requests sent. |
 | `agentgateway_response_bytes_total` | Counter | bytes | Total HTTP response bytes received. |
 | `agentgateway_response_processing_seconds` | Histogram | seconds | Duration from receiving the primary outbound response to sending the HTTP response (seconds). |
+| `agentgateway_retries_budget_exhausted_total` | Counter | — | The total number of retries skipped because the retry budget was exhausted. |
 | `agentgateway_retries_total` | Counter | — | The total number of request retries. |
 
 ## TCP

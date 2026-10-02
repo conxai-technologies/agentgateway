@@ -8221,12 +8221,43 @@
           ],
           "format": "uint",
           "minimum": 0
+        },
+        "budget": {
+          "description": "Caps concurrent retries relative to concurrent requests, so that a failing backend does\nnot see its load multiplied by retries. When unset, retries are not limited.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
       "required": [
         "codes"
       ]
+    },
+    "RetryBudget": {
+      "description": "Limits how many retries may be in flight at once, relative to the number of requests in\nflight, so that a failing backend does not see its load multiplied by retries.\n\nA retry is admitted only while the active retries are below\n`max(budgetPercent% of active requests, minRetryConcurrency)`. Counts are kept per retry\npolicy and per gateway replica. A request counts as active from its first attempt until its\nresponse body has been fully sent (or dropped), so long-lived streaming responses keep\ncounting. A request counts as one active retry from the moment a retry is admitted\n(including the backoff wait) until it completes; retrying it again competes for the budget\nanew. Failover across providers is performed by retries, so it is subject to the same budget.",
+      "type": "object",
+      "properties": {
+        "budgetPercent": {
+          "description": "Maximum active retries, as a percentage (0-100) of active requests. Defaults to 20.",
+          "type": "number",
+          "format": "double",
+          "default": 20.0
+        },
+        "minRetryConcurrency": {
+          "description": "Number of concurrent retries always allowed, regardless of `budgetPercent`, so that\nlow-traffic routes can still retry. Defaults to 3.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 3
+        }
+      },
+      "additionalProperties": false
     },
     "DelayPolicy": {
       "type": "object",

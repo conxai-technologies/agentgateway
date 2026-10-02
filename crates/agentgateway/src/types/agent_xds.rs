@@ -2616,6 +2616,8 @@ fn traffic_policy_from_proto(
 				precondition,
 				condition,
 				max_buffer_size: r.max_buffer_size.map(|v| v as usize),
+				// Retry budgets are not yet exposed over xDS.
+				budget: None,
 			})
 		},
 		Some(tps::Kind::Delay(d)) => TrafficPolicy::Delay(http::delay::Policy {

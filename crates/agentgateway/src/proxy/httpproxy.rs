@@ -1139,6 +1139,11 @@ impl HTTPProxy {
 			.timeout
 			.as_ref()
 			.and_then(|t| t.request_timeout);
+		let retry_budget = retries.as_ref().and_then(|r| r.budget.as_ref());
+		// Counts this request against the retry budget until its response completes.
+		let budget_request = retry_budget.map(|b| b.track_request());
+		// Held while this request is retrying, until its response completes.
+		let mut budget_retry: Option<retry::BudgetPermit> = None;
 		let mut replay_state = None;
 		let body =
 			if attempts > 1 && http_body::Body::size_hint(&body).lower() <= max_buffered_bytes as u64 {
@@ -1183,11 +1188,12 @@ impl HTTPProxy {
 				if stale_assignment && let Some(state) = substrate_state.as_mut() {
 					state.evict();
 				}
-				return if stale_assignment && substrate_state.is_some() {
+				let response = if stale_assignment && substrate_state.is_some() {
 					Ok(http::substrate::stale_assignment_unavailable())
 				} else {
 					response
 				};
+				return retry::hold_until_complete(response, budget_request, None);
 			},
 		};
 		let mut last_res: Option<Result<Response, SnapshottedProxyResponse>> = None;
@@ -1198,7 +1204,11 @@ impl HTTPProxy {
 			if matches!(this.is_capped(), None | Some(true)) {
 				// This could be either too much buffered, or it could mean we got a response before we read the request body.
 				debug!("buffered too much to attempt a retry");
-				return last_res.expect("should only be capped if we had a previous attempt");
+				return retry::hold_until_complete(
+					last_res.expect("should only be capped if we had a previous attempt"),
+					budget_request,
+					budget_retry,
+				);
 			}
 			if !last {
 				// Stop cloning on our last
@@ -1238,7 +1248,7 @@ impl HTTPProxy {
 				// Clear the request-local assignment and evict the same generation from the shared cache.
 				state.evict();
 			}
-			let retryable = !last
+			let mut retryable = !last
 				&& if substrate_default_retry {
 					stale_assignment
 				} else {
@@ -1248,15 +1258,26 @@ impl HTTPProxy {
 						log.request_snapshot.as_deref(),
 					)
 				};
-			if !retryable {
-				if !last {
-					debug!("response not retry-able");
+			if !last && !retryable {
+				debug!("response not retry-able");
+			}
+			if retryable && let Some(budget) = retry_budget {
+				// A retrying request holds a single slot; release it before competing for the next.
+				drop(budget_retry.take());
+				budget_retry = budget.try_acquire_retry();
+				if budget_retry.is_none() {
+					debug!("retry budget exhausted, not retrying");
+					log.retry_budget_exhausted = true;
+					retryable = false;
 				}
-				return if stale_assignment && substrate_state.is_some() {
+			}
+			if !retryable {
+				let res = if stale_assignment && substrate_state.is_some() {
 					Ok(http::substrate::stale_assignment_unavailable())
 				} else {
 					res
 				};
+				return retry::hold_until_complete(res, budget_request, budget_retry);
 			}
 			debug!(
 				backoff=?retry_backoff,
@@ -3907,6 +3928,7 @@ mod tests {
 			condition: condition
 				.map(|e| std::sync::Arc::new(crate::cel::Expression::new_strict(e).unwrap())),
 			max_buffer_size: None,
+			budget: None,
 		}
 	}
 
@@ -4481,6 +4503,54 @@ mod tests {
 		assert_eq!(received.len(), want_requests);
 		// Every attempt, including the replay, carries the full body.
 		assert!(received.iter().all(|r| r.body == body));
+	}
+
+	/// A burst of concurrent requests against a failing backend. Without a budget every request
+	/// is retried; with one, concurrent retries are capped.
+	#[rstest::rstest]
+	#[case::no_budget(None, 10)]
+	#[case::min_retry_concurrency(Some(json!({"budgetPercent": 0, "minRetryConcurrency": 2})), 2)]
+	#[case::percent_of_active_requests(Some(json!({"budgetPercent": 20, "minRetryConcurrency": 0})), 2)]
+	#[case::no_retries_allowed(Some(json!({"budgetPercent": 0, "minRetryConcurrency": 0})), 0)]
+	#[tokio::test]
+	async fn retry_budget_caps_retries_under_burst_of_failures(
+		#[case] budget: Option<serde_json::Value>,
+		#[case] expected_retries: usize,
+	) {
+		const BURST: usize = 10;
+		let mock = wiremock::MockServer::start().await;
+		// Slow failures keep the whole burst in flight while retries are admitted.
+		Mock::given(wiremock::matchers::any())
+			.respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_millis(300)))
+			.mount(&mock)
+			.await;
+		let mut bind = proxymock::base_gateway(&mock);
+		let mut retry = json!({"attempts": 1, "codes": [503]});
+		if let Some(budget) = budget {
+			retry["budget"] = budget;
+		}
+		bind.attach_route_policy(json!({ "retry": retry })).await;
+
+		// Each in-memory client carries a single connection, so use one per request.
+		let responses = futures::future::join_all((0..BURST).map(|_| {
+			proxymock::send_request(
+				bind.serve_http(proxymock::BIND_KEY),
+				Method::GET,
+				"http://lo",
+			)
+		}))
+		.await;
+		for res in responses {
+			assert_eq!(res.status(), 503);
+		}
+
+		let requests = mock.received_requests().await.expect("request recording");
+		let retries = requests
+			.iter()
+			.filter(|r| r.headers.contains_key("x-retry-attempt"))
+			.count();
+		assert_eq!(retries, expected_retries);
+		assert_eq!(requests.len(), BURST + expected_retries);
 	}
 }
 

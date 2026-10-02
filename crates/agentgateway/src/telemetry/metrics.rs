@@ -334,6 +334,7 @@ pub struct Metrics {
 
 	// metrics for request retries
 	pub retries: Counter,
+	pub retries_budget_exhausted: Counter,
 
 	// Number of requests currently waiting for a Substrate actor to become routable.
 	pub substrate_request_parking_active: Gauge,
@@ -630,6 +631,11 @@ impl Metrics {
 				&mut registry,
 				"retries",
 				"The total number of request retries",
+			),
+			retries_budget_exhausted: build(
+				&mut registry,
+				"retries_budget_exhausted",
+				"The total number of retries skipped because the retry budget was exhausted",
 			),
 		}
 	}
