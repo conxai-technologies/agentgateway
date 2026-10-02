@@ -1518,6 +1518,10 @@ pub struct LLMContext {
 	#[dynamic(rename = "cacheCreationInputTokens")]
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub cache_creation_input_tokens: Option<u64>,
+	/// Tokens written to cache with a 1-hour TTL, a subset of cacheCreationInputTokens (costs)
+	#[dynamic(rename = "cacheCreation1hInputTokens")]
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub cache_creation_1h_input_tokens: Option<u64>,
 	/// The number of tokens in the output/completion.
 	#[dynamic(rename = "outputTokens")]
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -1629,6 +1633,7 @@ impl LLMContext {
 			input_audio_tokens: resp.input_audio_tokens,
 			cached_input_tokens: resp.cached_input_tokens,
 			cache_creation_input_tokens: resp.cache_creation_input_tokens,
+			cache_creation_1h_input_tokens: resp.cache_creation_1h_input_tokens,
 			service_tier: resp.service_tier,
 			response_model: resp.provider_model,
 			// Not always set
@@ -1738,6 +1743,7 @@ impl From<llm::LLMRequest> for LLMContext {
 			input_audio_tokens: None,
 			cached_input_tokens: None,
 			cache_creation_input_tokens: None,
+			cache_creation_1h_input_tokens: None,
 			service_tier: None,
 			cost: None,
 			cost_rates: None,
@@ -2445,6 +2451,7 @@ pub fn full_example_executor() -> ExecutorSerde {
 			input_audio_tokens: Some(5),
 			cached_input_tokens: Some(20),
 			cache_creation_input_tokens: Some(10),
+			cache_creation_1h_input_tokens: None,
 			output_tokens: Some(50),
 			output_image_tokens: Some(30),
 			output_text_tokens: Some(20),

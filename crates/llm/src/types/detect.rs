@@ -455,6 +455,28 @@ mod tests {
 		assert_eq!(llm_response.output_tokens, None);
 		assert_eq!(llm_response.total_tokens, None);
 	}
+
+	#[test]
+	fn to_llm_response_extracts_anthropic_cache_creation_ttl_split() {
+		let resp = Response::Json(serde_json::json!({
+			"type": "message",
+			"model": "claude-sonnet-4-5",
+			"usage": {
+				"input_tokens": 10,
+				"output_tokens": 5,
+				"cache_creation_input_tokens": 3000,
+				"cache_creation": {
+					"ephemeral_5m_input_tokens": 1000,
+					"ephemeral_1h_input_tokens": 2000
+				}
+			}
+		}));
+
+		let llm_response = resp.to_llm_response(crate::LogContentFields::default());
+
+		assert_eq!(llm_response.cache_creation_input_tokens, Some(3000));
+		assert_eq!(llm_response.cache_creation_1h_input_tokens, Some(2000));
+	}
 }
 
 #[derive(Debug, Clone)]
@@ -568,6 +590,17 @@ mod lookups {
 		// Bedrock invoke
 		&["metadata", "usage", "cacheWriteInputTokensCount"],
 	];
+	pub const CACHE_CREATION_1H_INPUT_TOKENS: [&[&str]; 2] = [
+		// Messages
+		&["usage", "cache_creation", "ephemeral_1h_input_tokens"],
+		// Messages streaming (message_start)
+		&[
+			"message",
+			"usage",
+			"cache_creation",
+			"ephemeral_1h_input_tokens",
+		],
+	];
 	pub const CACHED_INPUT_TOKENS: [&[&str]; 6] = [
 		// Message
 		&["usage", "cache_read_input_tokens"],
@@ -617,6 +650,8 @@ impl ResponseType for Response {
 			reasoning_tokens: self.lookup(lookups::REASONING, |v| v.as_u64()),
 			cache_creation_input_tokens: self
 				.lookup(lookups::CACHE_CREATION_INPUT_TOKENS, |v| v.as_u64()),
+			cache_creation_1h_input_tokens: self
+				.lookup(lookups::CACHE_CREATION_1H_INPUT_TOKENS, |v| v.as_u64()),
 			cached_input_tokens: self.lookup(lookups::CACHED_INPUT_TOKENS, |v| v.as_u64()),
 			service_tier: self
 				.lookup(lookups::SERVICE_TIER, |v| v.as_str())
@@ -744,6 +779,12 @@ pub fn amend_from_stream_response(log: &mut StreamingUsageGuard, f: &StreamRespo
 		lookups::CACHE_CREATION_INPUT_TOKENS,
 		|v| v.as_u64(),
 		|l, v| l.response.cache_creation_input_tokens = Some(v),
+	);
+	let _cache_creation_1h_input_tokens = f.set_if(
+		log,
+		lookups::CACHE_CREATION_1H_INPUT_TOKENS,
+		|v| v.as_u64(),
+		|l, v| l.response.cache_creation_1h_input_tokens = Some(v),
 	);
 	let _cached_input_tokens = f.set_if(
 		log,

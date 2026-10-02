@@ -106,6 +106,35 @@ providers:
 	}
 }
 
+func TestOverlayCatalogCacheWrite1h(t *testing.T) {
+	base := ModelCatalog{Providers: map[string]Provider{
+		"anthropic": {Models: map[string]Model{
+			"claude-sonnet-4-5": {Rates: Rates{Input: "3", CacheWrite: "3.75"}},
+		}},
+	}}
+	var overlay ModelCatalog
+	if err := yaml.UnmarshalStrict([]byte(`
+providers:
+  anthropic:
+    models:
+      claude-sonnet-4-5:
+        rates:
+          cacheWrite1h: "6"
+`), &overlay); err != nil {
+		t.Fatal(err)
+	}
+
+	base.overlayWith(&overlay)
+
+	want := Rates{Input: "3", CacheWrite: "3.75", CacheWrite1h: "6"}
+	if got := base.Providers["anthropic"].Models["claude-sonnet-4-5"].Rates; got != want {
+		t.Fatalf("merged rates = %+v, want %+v", got, want)
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOverlayCatalogWildcards(t *testing.T) {
 	base := ModelCatalog{Providers: map[string]Provider{
 		"anthropic": {Models: map[string]Model{

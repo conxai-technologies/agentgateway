@@ -2058,3 +2058,52 @@ fn test_responses_input_file_unknown_format_is_rejected() {
 		"unexpected error: {err}"
 	);
 }
+
+#[test]
+fn test_converse_cache_details_report_1h_cache_writes() {
+	let model = "anthropic.claude-sonnet-4-5-20250929-v1:0";
+	let bedrock_response = json!({
+		"output": {
+			"message": {
+				"role": "assistant",
+				"content": [{"text": "Hi"}]
+			}
+		},
+		"stopReason": "end_turn",
+		"usage": {
+			"inputTokens": 10,
+			"outputTokens": 5,
+			"totalTokens": 3015,
+			"cacheReadInputTokens": 0,
+			"cacheWriteInputTokens": 3000,
+			"cacheDetails": [
+				{"ttl": "1h", "inputTokens": 2000},
+				{"ttl": "5m", "inputTokens": 1000}
+			]
+		}
+	});
+	let bytes = Bytes::from(serde_json::to_vec(&bedrock_response).unwrap());
+
+	for response in [
+		super::from_completions::translate_response(&bytes, model, None).unwrap(),
+		super::from_messages::translate_response(&bytes, model, None).unwrap(),
+	] {
+		let llm = response.to_llm_response(crate::LogContentFields::default());
+		assert_eq!(llm.cache_creation_input_tokens, Some(3000));
+		assert_eq!(llm.cache_creation_1h_input_tokens, Some(2000));
+	}
+
+	let usage: types::bedrock::TokenUsage =
+		serde_json::from_value(bedrock_response["usage"].clone()).unwrap();
+	assert_eq!(usage.cache_write_1h_input_tokens, Some(2000));
+	let usage: types::bedrock::TokenUsage = serde_json::from_value(json!({
+		"inputTokens": 10,
+		"outputTokens": 5,
+		"totalTokens": 15
+	}))
+	.unwrap();
+	assert_eq!(
+		usage.cache_write_1h_input_tokens, None,
+		"absent cacheDetails"
+	);
+}

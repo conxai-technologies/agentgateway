@@ -385,6 +385,34 @@ pub struct TokenUsage {
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub cache_write_input_tokens: Option<usize>,
+	/// The subset of `cache_write_input_tokens` written with a 1-hour TTL, summed from the
+	/// per-TTL `cacheDetails` breakdown (optional)
+	#[serde(
+		rename = "cacheDetails",
+		default,
+		deserialize_with = "deserialize_cache_write_1h",
+		skip_serializing
+	)]
+	pub cache_write_1h_input_tokens: Option<usize>,
+}
+
+fn deserialize_cache_write_1h<'de, D: serde::Deserializer<'de>>(
+	deserializer: D,
+) -> Result<Option<usize>, D::Error> {
+	#[derive(Deserialize)]
+	#[serde(rename_all = "camelCase")]
+	struct CacheDetail {
+		ttl: String,
+		input_tokens: usize,
+	}
+	let details = Option::<Vec<CacheDetail>>::deserialize(deserializer)?;
+	Ok(details.map(|details| {
+		details
+			.iter()
+			.filter(|d| d.ttl == "1h")
+			.map(|d| d.input_tokens)
+			.sum()
+	}))
 }
 
 /// Metrics for the Converse call

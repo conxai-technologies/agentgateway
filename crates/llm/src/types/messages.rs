@@ -162,6 +162,18 @@ pub struct Usage {
 	pub rest: serde_json::Value,
 }
 
+impl Usage {
+	/// The subset of `cache_creation_input_tokens` written with a 1-hour TTL, from
+	/// `usage.cache_creation`. Read from `rest` so the passthrough body is forwarded untouched.
+	pub fn cache_creation_1h_input_tokens(&self) -> Option<u64> {
+		self
+			.rest
+			.get("cache_creation")?
+			.get("ephemeral_1h_input_tokens")?
+			.as_u64()
+	}
+}
+
 pub fn get_messages_helper(
 	messages: &[RequestMessage],
 	system: &Option<TextBlock>,
@@ -588,6 +600,7 @@ impl ResponseType for Response {
 			count_tokens: None,
 			reasoning_tokens: None,
 			cache_creation_input_tokens: self.usage.cache_creation_input_tokens,
+			cache_creation_1h_input_tokens: self.usage.cache_creation_1h_input_tokens(),
 			cached_input_tokens: self.usage.cache_read_input_tokens,
 			service_tier: self.usage.service_tier.as_deref().map(Into::into),
 			completion: if log_content.completion {
@@ -1193,9 +1206,24 @@ pub mod typed {
 		#[serde(skip_serializing_if = "Option::is_none")]
 		pub cache_read_input_tokens: Option<usize>,
 
+		/// Breakdown of `cache_creation_input_tokens` by cache TTL.
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		pub cache_creation: Option<CacheCreation>,
+
 		/// The service tier used to serve the request.
 		#[serde(skip_serializing_if = "Option::is_none")]
 		pub service_tier: Option<String>,
+	}
+
+	/// Cache creation tokens split by the TTL they were written with.
+	#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+	pub struct CacheCreation {
+		/// The number of input tokens used to create the 5-minute cache entry.
+		#[serde(default)]
+		pub ephemeral_5m_input_tokens: usize,
+		/// The number of input tokens used to create the 1-hour cache entry.
+		#[serde(default)]
+		pub ephemeral_1h_input_tokens: usize,
 	}
 
 	/// Tool definition. A client-defined custom tool always carries `input_schema` and no `type`
@@ -1363,6 +1391,10 @@ pub mod typed {
 				pages: None,
 				reasoning_tokens: None,
 				cache_creation_input_tokens: self.usage.cache_creation_input_tokens.map(|i| i as u64),
+				cache_creation_1h_input_tokens: self
+					.usage
+					.cache_creation
+					.map(|c| c.ephemeral_1h_input_tokens as u64),
 				cached_input_tokens: self.usage.cache_read_input_tokens.map(|i| i as u64),
 				service_tier: self.usage.service_tier.as_deref().map(Into::into),
 				provider_model: Some(agent_core::strng::new(&self.model)),
@@ -1490,6 +1522,7 @@ mod tests {
 				output_tokens: 50,
 				cache_creation_input_tokens: None,
 				cache_read_input_tokens: None,
+				cache_creation: None,
 				service_tier: None,
 			},
 			input_audio_tokens: None,
@@ -1549,6 +1582,7 @@ mod tests {
 				output_tokens: 20,
 				cache_creation_input_tokens: None,
 				cache_read_input_tokens: None,
+				cache_creation: None,
 				service_tier: None,
 			},
 			input_audio_tokens: None,
@@ -1620,5 +1654,71 @@ mod tests {
 			tool_calls[0].arguments,
 			serde_json::json!({"location":"San Francisco"})
 		);
+	}
+
+	fn cache_ttl_split_body() -> serde_json::Value {
+		serde_json::json!({
+			"id": "msg_cache_ttl",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-sonnet-4-5",
+			"content": [{"type": "text", "text": "Hi"}],
+			"stop_reason": "end_turn",
+			"stop_sequence": null,
+			"usage": {
+				"input_tokens": 10,
+				"output_tokens": 5,
+				"cache_read_input_tokens": 0,
+				"cache_creation_input_tokens": 3000,
+				"cache_creation": {
+					"ephemeral_5m_input_tokens": 1000,
+					"ephemeral_1h_input_tokens": 2000
+				}
+			}
+		})
+	}
+
+	#[test]
+	fn passthrough_response_reports_1h_cache_writes_and_forwards_usage() {
+		let body = cache_ttl_split_body();
+		let response: Response = serde_json::from_value(body.clone()).unwrap();
+		let llm_response = response.to_llm_response(crate::LogContentFields::default());
+		assert_eq!(llm_response.cache_creation_input_tokens, Some(3000));
+		assert_eq!(llm_response.cache_creation_1h_input_tokens, Some(2000));
+		assert_eq!(
+			serde_json::to_value(&response).unwrap()["usage"],
+			body["usage"],
+			"passthrough usage is forwarded unchanged"
+		);
+	}
+
+	#[test]
+	fn typed_response_reports_1h_cache_writes() {
+		let response: typed::MessagesResponse = serde_json::from_value(cache_ttl_split_body()).unwrap();
+		assert_eq!(
+			response.usage.cache_creation,
+			Some(typed::CacheCreation {
+				ephemeral_5m_input_tokens: 1000,
+				ephemeral_1h_input_tokens: 2000,
+			})
+		);
+		let llm_response = response.to_llm_response(crate::LogContentFields::default());
+		assert_eq!(llm_response.cache_creation_input_tokens, Some(3000));
+		assert_eq!(llm_response.cache_creation_1h_input_tokens, Some(2000));
+	}
+
+	#[test]
+	fn response_without_cache_ttl_split_reports_none() {
+		let mut body = cache_ttl_split_body();
+		body["usage"]
+			.as_object_mut()
+			.unwrap()
+			.remove("cache_creation");
+		let response: Response = serde_json::from_value(body.clone()).unwrap();
+		let llm_response = response.to_llm_response(crate::LogContentFields::default());
+		assert_eq!(llm_response.cache_creation_1h_input_tokens, None);
+		let response: typed::MessagesResponse = serde_json::from_value(body).unwrap();
+		let llm_response = response.to_llm_response(crate::LogContentFields::default());
+		assert_eq!(llm_response.cache_creation_1h_input_tokens, None);
 	}
 }

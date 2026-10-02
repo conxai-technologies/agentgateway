@@ -394,6 +394,10 @@ pub struct LLMResponse {
 	pub reasoning_tokens: Option<u64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub cache_creation_input_tokens: Option<u64>,
+	/// The subset of `cache_creation_input_tokens` written with a 1-hour TTL, for providers that
+	/// bill those writes at a different rate than the default (5-minute) TTL.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub cache_creation_1h_input_tokens: Option<u64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub cached_input_tokens: Option<u64>,
 	#[serde(skip_serializing_if = "Option::is_none")]

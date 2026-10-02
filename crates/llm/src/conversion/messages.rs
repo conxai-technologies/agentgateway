@@ -533,6 +533,10 @@ pub mod from_completions {
 		let provider_usage = Some(super::super::ProviderUsage {
 			input_tokens: resp.usage.input_tokens as u64,
 			total_tokens: (resp.usage.input_tokens + resp.usage.output_tokens) as u64,
+			cache_creation_1h_input_tokens: resp
+				.usage
+				.cache_creation
+				.map(|c| c.ephemeral_1h_input_tokens as u64),
 			..Default::default()
 		});
 		let openai = translate_response_internal(resp);
@@ -772,6 +776,10 @@ pub mod from_completions {
 							message.usage.cache_read_input_tokens.map(|i| i as u64);
 						r.response.cache_creation_input_tokens =
 							message.usage.cache_creation_input_tokens.map(|i| i as u64);
+						r.response.cache_creation_1h_input_tokens = message
+							.usage
+							.cache_creation
+							.map(|c| c.ephemeral_1h_input_tokens as u64);
 						r.response.service_tier = message.usage.service_tier.as_deref().map(Into::into);
 						r.response.provider_model = Some(strng::new(&message.model))
 					});
@@ -1139,6 +1147,10 @@ pub fn passthrough_stream(
 					r.response.cached_input_tokens = message.usage.cache_read_input_tokens.map(|i| i as u64);
 					r.response.cache_creation_input_tokens =
 						message.usage.cache_creation_input_tokens.map(|i| i as u64);
+					r.response.cache_creation_1h_input_tokens = message
+						.usage
+						.cache_creation
+						.map(|c| c.ephemeral_1h_input_tokens as u64);
 					r.response.service_tier = message.usage.service_tier.as_deref().map(Into::into);
 					r.response.provider_model = Some(strng::new(&message.model))
 				});
