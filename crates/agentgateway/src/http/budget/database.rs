@@ -17,8 +17,6 @@ const SQLITE_SCHEMA: &str = include_str!("sqlite_schema.sql");
 const POSTGRES_SCHEMA: &str = include_str!("postgres_schema.sql");
 const SQLITE_UPSERT: &str = include_str!("sqlite_upsert.sql");
 const POSTGRES_UPSERT: &str = include_str!("postgres_upsert.sql");
-/// Names the advisory lock that serializes Postgres schema initialization across replicas.
-pub(crate) const SCHEMA_LOCK_STORE: &str = "budget_usage";
 
 impl BudgetPolicy {
 	/// Initializes and migrates the budget tables, prunes expired rows, preloads every persisted
@@ -53,9 +51,10 @@ impl BudgetPolicy {
 					.context("failed to prune expired budget usage")?;
 			},
 			crate::database::DatabasePool::Postgres(pool) => {
-				let mut tx = crate::database::begin_postgres_schema_init(pool, SCHEMA_LOCK_STORE)
-					.await
-					.context("failed to initialize budget database")?;
+				let mut tx =
+					crate::database::begin_postgres_schema_init(pool, crate::database::BUDGET_SCHEMA_LOCK)
+						.await
+						.context("failed to initialize budget database")?;
 				sqlx::raw_sql(POSTGRES_SCHEMA)
 					.execute(&mut *tx)
 					.await
