@@ -94,9 +94,12 @@ impl Config {
 		self.required.unwrap_or(true)
 	}
 
-	/// Whether both configs describe the same connection pool.
+	/// Whether both configs describe the same connection pool. Startup and queueing options do
+	/// not split the pool; the authentication method does, since it decides how connections log in.
 	pub fn same_pool(&self, other: &Config) -> bool {
-		self.url == other.url && self.max_connections == other.max_connections
+		self.url == other.url
+			&& self.max_connections == other.max_connections
+			&& self.auth == other.auth
 	}
 }
 
@@ -1144,7 +1147,36 @@ mod tests {
 			max_connections: Some(1),
 			required,
 			max_queued_records,
+			auth: None,
 		}
+	}
+
+	#[test]
+	fn same_pool_ignores_startup_options_but_not_auth() {
+		let postgres = |auth: Option<crate::database::DatabaseAuth>| Config {
+			url: "postgres://llm_gateway@db.example:5432/llm_gateway?sslmode=verify-full".to_string(),
+			max_connections: Some(5),
+			required: None,
+			max_queued_records: None,
+			auth,
+		};
+		let primary = postgres(None);
+		let logging = Config {
+			required: Some(false),
+			max_queued_records: Some(1000),
+			..primary.clone()
+		};
+		assert!(logging.same_pool(&primary));
+
+		let iam = || Some(crate::database::DatabaseAuth::AwsRdsIam { region: None });
+		assert!(!postgres(iam()).same_pool(&primary));
+		assert!(!primary.same_pool(&postgres(iam())));
+		assert!(postgres(iam()).same_pool(&postgres(iam())));
+		assert!(!postgres(iam()).same_pool(&postgres(Some(
+			crate::database::DatabaseAuth::AwsRdsIam {
+				region: Some("eu-central-1".to_string()),
+			}
+		))));
 	}
 
 	fn record(id: &str) -> PendingRequestLog {
