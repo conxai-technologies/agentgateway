@@ -37,15 +37,13 @@ jobs:
           - { platform: linux/arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    # No layer cache: the cargo build layer changes on every commit (its target dir is a
+    # BuildKit cache mount, which no exporter carries), and a mode=max gha export of the
+    # Rust builder layers failed the first build and would evict the CI Rust caches.
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Free disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
@@ -81,8 +79,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=conxai-image-${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=conxai-image-${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
       - name: Record the digest
         run: |
