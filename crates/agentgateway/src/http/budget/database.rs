@@ -51,14 +51,31 @@ impl BudgetPolicy {
 					.context("failed to prune expired budget usage")?;
 			},
 			crate::database::DatabasePool::Postgres(pool) => {
+				let mut tx =
+					crate::database::begin_postgres_schema_init(pool, crate::database::BUDGET_SCHEMA_LOCK)
+						.await
+						.context("failed to initialize budget database")?;
 				sqlx::raw_sql(POSTGRES_SCHEMA)
-					.execute(pool)
+					.execute(&mut *tx)
 					.await
 					.context("failed to initialize budget database")?;
-				sqlx::query("ALTER TABLE budget_usage ADD COLUMN IF NOT EXISTS unit TEXT")
-					.execute(pool)
+				// Inspect before altering: ALTER TABLE takes an ACCESS EXCLUSIVE lock even when the
+				// column exists, which would block every other replica's flushes on each startup.
+				let has_unit = sqlx::query_scalar::<_, bool>(
+					"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'budget_usage' AND column_name = 'unit')",
+				)
+				.fetch_one(&mut *tx)
+				.await
+				.context("failed to inspect budget database schema")?;
+				if !has_unit {
+					sqlx::query("ALTER TABLE budget_usage ADD COLUMN IF NOT EXISTS unit TEXT")
+						.execute(&mut *tx)
+						.await
+						.context("failed to migrate budget database schema")?;
+				}
+				tx.commit()
 					.await
-					.context("failed to migrate budget database schema")?;
+					.context("failed to initialize budget database")?;
 				sqlx::query("DELETE FROM budget_usage WHERE window_end <= $1")
 					.bind(now.timestamp_millis())
 					.execute(pool)

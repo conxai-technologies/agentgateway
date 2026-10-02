@@ -175,7 +175,11 @@ impl ConfigResourceStore {
 				})
 			},
 			DatabasePool::Postgres(pool) => {
-				sqlx::raw_sql(POSTGRES_SCHEMA).execute(pool).await?;
+				let mut tx =
+					crate::database::begin_postgres_schema_init(pool, crate::database::CONFIG_SCHEMA_LOCK)
+						.await?;
+				sqlx::raw_sql(POSTGRES_SCHEMA).execute(&mut *tx).await?;
+				tx.commit().await?;
 				let notification_id = uuid::Uuid::new_v4().to_string();
 				let mut listener = PgListener::connect_with(pool).await?;
 				listener.listen(POSTGRES_CHANGE_CHANNEL).await?;
