@@ -492,7 +492,10 @@ impl ModelRouter {
 				},
 			};
 			let nested_model = if nested {
-				self.virtual_models.iter().find(|model| model.name == target)
+				self
+					.virtual_models
+					.iter()
+					.find(|model| model.name == target)
 			} else {
 				None
 			};
@@ -1428,19 +1431,15 @@ mod tests {
 	}
 
 	async fn resolved_backend(router: &ModelRouter, req: &mut Request) -> String {
-		match router
+		let ResolveResult::Backend(resolved) = router
 			.resolve(req, &llm::catalog::ModelCatalog::default())
 			.await
-		{
-			ResolveResult::Backend(ResolvedBackend {
-				backend: RouteBackendReference {
-					target: RouteBackendTarget::Backend(key),
-					..
-				},
-				..
-			}) => key.to_string(),
-			ResolveResult::Backend(resolved) => panic!("unexpected backend {:?}", resolved.backend),
-			ResolveResult::DirectResponse(resp) => panic!("expected a backend, got {}", resp.status()),
+		else {
+			panic!("expected a backend");
+		};
+		match resolved.backend.target {
+			RouteBackendTarget::Backend(key) => key.to_string(),
+			target => panic!("unexpected backend target {target:?}"),
 		}
 	}
 

@@ -1212,9 +1212,8 @@ llm:
 #[tokio::test]
 async fn test_llm_virtual_model_rejects_excessive_nesting() {
 	let config = |depth: usize| {
-		let mut config = String::from(
-			"llm:\n  models:\n  - name: concrete\n    provider: openAI\n  virtualModels:\n",
-		);
+		let mut config =
+			String::from("llm:\n  models:\n  - name: concrete\n    provider: openAI\n  virtualModels:\n");
 		for idx in 0..depth {
 			let target = if idx + 1 == depth {
 				"concrete".to_string()
