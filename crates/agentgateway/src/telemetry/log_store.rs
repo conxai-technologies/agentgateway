@@ -83,6 +83,9 @@ pub struct Config {
 	#[serde(default)]
 	#[cfg_attr(feature = "schema", schemars(range(min = 1)))]
 	pub max_queued_records: Option<usize>,
+	/// How to authenticate to a PostgreSQL database. When unset, the credentials in `url` are used.
+	#[serde(default)]
+	pub auth: Option<crate::database::DatabaseAuth>,
 }
 
 impl Config {
@@ -1070,10 +1073,7 @@ impl Backend {
 	) -> anyhow::Result<Self> {
 		let pool = match pool {
 			Some(pool) => pool,
-			None => {
-				crate::database::DatabasePool::connect_with_max_connections(&cfg.url, cfg.max_connections)
-					.await?
-			},
+			None => crate::database::DatabasePool::connect_config(cfg).await?,
 		};
 		match pool {
 			crate::database::DatabasePool::Sqlite(pool) => {

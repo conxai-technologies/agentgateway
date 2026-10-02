@@ -55,13 +55,9 @@ pub(crate) fn execute(args: RunArgs) -> anyhow::Result<()> {
 				info!("version: {}", version::BuildInfo::new().version);
 			}
 			let database_pool = match config.database.as_ref() {
-				Some(database) => Some(
-					agentgateway::database::DatabasePool::connect_with_max_connections(
-						&database.url,
-						database.max_connections,
-					)
-					.await?,
-				),
+				Some(database) => {
+					Some(agentgateway::database::DatabasePool::connect_config(database).await?)
+				},
 				None => None,
 			};
 			if let Some(pool) = database_pool.clone() {

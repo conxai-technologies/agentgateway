@@ -783,11 +783,51 @@
           "format": "uint",
           "minimum": 1,
           "default": null
+        },
+        "auth": {
+          "description": "How to authenticate to a PostgreSQL database. When unset, the credentials in `url` are used.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DatabaseAuth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
       "required": [
         "url"
+      ]
+    },
+    "DatabaseAuth": {
+      "description": "How the gateway authenticates to a PostgreSQL database. When unset, the credentials in\n`url` are used.",
+      "oneOf": [
+        {
+          "description": "Amazon RDS / Aurora IAM database authentication. The password is a short-lived token\nsigned with the AWS default credential chain (for example EKS Pod Identity or IRSA). The\ntoken is renewed in the background; it is only checked when a connection is opened, so\nopen connections are not affected when it expires. `url` must name the database user,\nmust not contain a password, and must use `sslmode=require`, `verify-ca` or `verify-full`.\nPass the RDS CA bundle with `sslrootcert=<path>` in `url` or `PGSSLROOTCERT`.",
+          "type": "object",
+          "properties": {
+            "awsRdsIam": {
+              "type": "object",
+              "properties": {
+                "region": {
+                  "description": "AWS region of the database. Defaults to the region of the AWS SDK environment\n(`AWS_REGION` or the active profile).",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "awsRdsIam"
+          ],
+          "additionalProperties": false
+        }
       ]
     },
     "RawStorageConfig": {

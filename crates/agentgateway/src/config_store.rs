@@ -154,10 +154,11 @@ pub struct ConfigResourceUpsert {
 }
 
 pub async fn setup(cfg: &log_store::Config) -> anyhow::Result<ConfigResourceStore> {
-	ConfigResourceStore::connect(&cfg.url, cfg.max_connections).await
+	ConfigResourceStore::from_pool(DatabasePool::connect_config(cfg).await?).await
 }
 
 impl ConfigResourceStore {
+	#[cfg(test)]
 	async fn connect(url: &str, max_connections: Option<u32>) -> anyhow::Result<Self> {
 		Self::from_pool(DatabasePool::connect_with_max_connections(url, max_connections).await?).await
 	}

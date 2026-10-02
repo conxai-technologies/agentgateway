@@ -432,6 +432,20 @@ pub fn parse_config(
 	{
 		anyhow::bail!("config.logging.database.maxQueuedRecords must be greater than zero");
 	}
+	for (field, db) in [
+		("config.database", database.as_ref()),
+		(
+			"config.logging.database",
+			explicit_logging_database.as_ref(),
+		),
+	] {
+		if let Some(db) = db
+			&& let Some(auth) = db.auth.as_ref()
+		{
+			crate::database::validate_auth(&db.url, auth)
+				.map_err(|err| err.context(format!("invalid {field}.auth")))?;
+		}
+	}
 	let logging_database = explicit_logging_database.or_else(|| database.clone());
 
 	let mut storage_mode = raw.storage.clone().unwrap_or_default().mode;
@@ -1607,6 +1621,112 @@ config:
 				.to_string()
 				.contains("config.logging.database.maxQueuedRecords must be greater than zero"),
 			"unexpected error: {err}"
+		);
+	}
+
+	#[test]
+	fn database_aws_rds_iam_auth() {
+		use crate::database::DatabaseAuth;
+
+		let _env_lock = lock_env();
+		let config = parse_config(
+			r#"
+config:
+  database:
+    url: "postgres://llm_gateway@db.example:5432/llm_gateway?sslmode=verify-full&sslrootcert=/etc/rds/global-bundle.pem"
+    auth:
+      awsRdsIam:
+        region: eu-central-1
+  logging:
+    database:
+      url: "postgres://llm_gateway@logs.example:5432/llm_gateway?sslmode=require"
+      auth:
+        awsRdsIam: {}
+"#
+			.to_string(),
+			None,
+		)
+		.expect("IAM auth config should parse");
+		assert_eq!(
+			config.database.as_ref().and_then(|db| db.auth.as_ref()),
+			Some(&DatabaseAuth::AwsRdsIam {
+				region: Some("eu-central-1".to_string())
+			})
+		);
+		assert_eq!(
+			config
+				.logging
+				.database
+				.as_ref()
+				.and_then(|db| db.auth.as_ref()),
+			Some(&DatabaseAuth::AwsRdsIam { region: None })
+		);
+
+		for (yaml, expected) in [
+			(
+				r#"
+config:
+  database:
+    url: "postgres://llm_gateway@db.example:5432/llm_gateway"
+    auth:
+      awsRdsIam: {}
+"#,
+				"requires TLS",
+			),
+			(
+				r#"
+config:
+  logging:
+    database:
+      url: "postgres://llm_gateway@db.example:5432/llm_gateway?sslmode=disable"
+      auth:
+        awsRdsIam: {}
+"#,
+				"requires TLS",
+			),
+			(
+				r#"
+config:
+  database:
+    url: "postgres://llm_gateway:secret@db.example:5432/llm_gateway?sslmode=verify-full"
+    auth:
+      awsRdsIam: {}
+"#,
+				"remove the password",
+			),
+			(
+				r#"
+config:
+  database:
+    url: "sqlite::memory:"
+    auth:
+      awsRdsIam: {}
+"#,
+				"requires a postgres:// or postgresql:// URL",
+			),
+		] {
+			let err = parse_config(yaml.to_string(), None).expect_err("invalid IAM auth config");
+			let err = format!("{err:#}");
+			assert!(err.contains("auth"), "unexpected error: {err}");
+			assert!(err.contains(expected), "unexpected error: {err}");
+		}
+
+		let err = parse_config(
+			r#"
+config:
+  database:
+    url: "postgres://llm_gateway@db.example:5432/llm_gateway?sslmode=verify-full"
+    auth:
+      awsRdsIam:
+        regoin: eu-central-1
+"#
+			.to_string(),
+			None,
+		)
+		.expect_err("unknown IAM auth field");
+		assert!(
+			format!("{err:#}").contains("regoin"),
+			"unexpected error: {err:#}"
 		);
 	}
 
