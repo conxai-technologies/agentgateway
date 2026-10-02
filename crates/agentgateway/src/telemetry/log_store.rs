@@ -652,7 +652,9 @@ async fn write_records(backend: &Backend, queue: &QueueState, records: &[StoredR
 	let t0 = Instant::now();
 	let count = records.len();
 	match backend.insert_batch(records).await {
-		Ok(()) => METRICS.unavailable.set(0),
+		Ok(()) => {
+			METRICS.unavailable.set(0);
+		},
 		Err(err) => {
 			METRICS.unavailable.set(1);
 			METRICS.dropped(DropReason::WriteFailed, count);
