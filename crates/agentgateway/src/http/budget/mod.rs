@@ -858,6 +858,7 @@ mod tests {
 			window_start: utc(start),
 			window_end: utc(end),
 			updated_at: now,
+			exceeded_requests: 0,
 		};
 		let configured = |mut counter: BudgetCounter, window: BudgetWindow| {
 			counter.configure("key", &budget(window), now).unwrap();
