@@ -869,6 +869,7 @@ mod tests {
 			otlp_fields: LoggingFields::default(),
 			metric_fields: MetricFields::default(),
 			database_fields: LoggingFields::default(),
+			database_payload_filter: None,
 		};
 		let mut registry = Registry::default();
 		let metrics = Arc::new(Metrics::new(

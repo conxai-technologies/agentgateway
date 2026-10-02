@@ -700,3 +700,23 @@ fn log_guardrails_binding() {
 	.unwrap();
 	assert!(exec.eval_bool(&exp));
 }
+
+#[test]
+fn request_phase_only_excludes_attributes_settled_later() {
+	for (expr, want) in [
+		("true", true),
+		("default(apiKey.capture, false) == true", true),
+		(r#"jwt.sub == "u" && request.headers["x-a"] == "b""#, true),
+		(
+			r#"source.address == "10.0.0.1" || backend.name == "b""#,
+			true,
+		),
+		("response.code == 200", false),
+		(r#"request.body == """#, false),
+		(r#"llm.requestModel == "m""#, false),
+		(r#"metadata.x == "y""#, false),
+	] {
+		let exp = Expression::new_strict(expr).unwrap();
+		assert_eq!(exp.request_phase_only(), want, "{expr}");
+	}
+}

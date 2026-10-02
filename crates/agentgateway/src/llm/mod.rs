@@ -2206,7 +2206,7 @@ impl AIProvider {
 		if let Some(log) = log
 			&& original_format.supports_prompt_guard()
 		{
-			if log.database_llm == Some(crate::types::frontend::DatabaseLlmMode::Full) {
+			if log.captures_database_llm_payload() {
 				log.input_messages = Some(req.get_messages_v2().into());
 			}
 			if log.cel.cel_context.needs_llm_prompt() {
