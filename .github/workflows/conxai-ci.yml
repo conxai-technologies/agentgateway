@@ -6,9 +6,13 @@
 #   gh workflow run conxai-ci.yml -R conxai-technologies/agentgateway -f ref=conxai/<topic>
 # The run is named after the ref it tests, so `gh run list -w conxai-ci.yml` finds it.
 #
+# The ui job builds the UI exactly as the Dockerfile's node stage does, so a schema
+# change that breaks the UI's generated types fails here, not in conxai-image after
+# conxai/main has moved. It always runs: the UI's types are generated from schema/.
+#
 # Skipped from upstream: the Windows/macOS test matrix, the keycloak-backed example
-# validation (needs docker compose services), UI lint/e2e, and every controller (Go,
-# kind, conformance) job. We run the standalone data plane only.
+# validation (needs docker compose services), UI lint (biome) and e2e, and every
+# controller (Go, kind, conformance) job. We run the standalone data plane only.
 name: conxai-ci
 run-name: conxai-ci ${{ inputs.ref || github.ref_name }}
 
@@ -115,4 +119,40 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  ui:
+    name: UI build (Dockerfile node stage)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The Dockerfile's node stage image; the first step fails if the two drift apart.
+    container: docker.io/library/node:24.17.0-bookworm
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Same node image as the Dockerfile
+        run: grep -qx 'FROM docker.io/library/node:24.17.0-bookworm AS node' Dockerfile
+      - name: Enable corepack (pnpm version from package.json packageManager)
+        working-directory: ui
+        run: corepack enable && node --version && pnpm --version
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /pnpm/store
+          key: ui-pnpm-store-${{ hashFiles('ui/package.json', 'ui/pnpm-lock.yaml') }}
+          restore-keys: ui-pnpm-store-
+      - name: pnpm install --frozen-lockfile
+        working-directory: ui
+        run: pnpm install --frozen-lockfile --store-dir=/pnpm/store
+      - name: pnpm build (generate schema types, tsc -b, vite build)
+        working-directory: ui
+        run: pnpm build
+      - if: env.SAVE_CACHE == 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /pnpm/store
           key: ${{ steps.cache.outputs.cache-primary-key }}
