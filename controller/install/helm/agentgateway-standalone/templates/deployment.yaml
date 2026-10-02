@@ -37,6 +37,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "agentgateway-standalone.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -74,6 +77,13 @@ spec:
         env:
         - name: RUST_BACKTRACE
           value: "1"
+        {{- with .Values.database.postgres.existingSecret.name }}
+        - name: AGENTGATEWAY_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ . }}
+              key: {{ $.Values.database.postgres.existingSecret.key }}
+        {{- end }}
         {{- if .Values.oidc.enabled }}
         - name: OIDC_COOKIE_SECRET
           valueFrom:
@@ -117,6 +127,10 @@ spec:
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.dnsConfig }}
