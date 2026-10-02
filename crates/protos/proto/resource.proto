@@ -987,10 +987,21 @@ message TrafficPolicySpec {
       FAIL_OPEN = 1;
     }
     message Descriptor {
+      // What to do when an expression of the descriptor fails to evaluate. Defaults to DROP.
+      enum OnError {
+        // Drop the descriptor; the remaining descriptors are still sent.
+        DROP = 0;
+        // Ignore only the failed expression: leave out a failed entry, use the default cost,
+        // or send no limit override.
+        SKIP = 1;
+        // Reject the request.
+        ERROR = 2;
+      }
       repeated Entry entries = 1;
       Type type = 2;
       optional string limit_override = 3; // CEL expr returning {unit, requestsPerUnit}
       optional string cost = 4; // CEL expr
+      OnError on_error = 5;
     }
     message Entry {
       string key = 1;

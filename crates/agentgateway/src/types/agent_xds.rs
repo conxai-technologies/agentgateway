@@ -2807,6 +2807,16 @@ fn traffic_policy_from_proto(
 							cost: d.cost.as_ref().map(|expr| {
 								permissive_cel_expression_arc(diagnostics, "traffic.remoteRateLimit.cost", expr)
 							}),
+							on_error: match tps::remote_rate_limit::descriptor::OnError::try_from(d.on_error) {
+								Ok(tps::remote_rate_limit::descriptor::OnError::Skip) => {
+									http::remoteratelimit::OnError::Skip
+								},
+								Ok(tps::remote_rate_limit::descriptor::OnError::Error) => {
+									http::remoteratelimit::OnError::Error
+								},
+								// Default to Drop (proto default is DROP = 0)
+								_ => http::remoteratelimit::OnError::Drop,
+							},
 						})
 					},
 				)
