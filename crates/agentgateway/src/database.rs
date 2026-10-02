@@ -113,10 +113,10 @@ impl DatabasePool {
 	}
 }
 
-/// How long schema initialization waits for a lock (the schema advisory lock, or a table lock the
-/// DDL needs) before failing. Matches the request log store: a stuck holder becomes a startup
-/// error instead of a silent hang that only a liveness probe ends.
-const SCHEMA_LOCK_TIMEOUT: &str = "10s";
+/// How long schema initialization at startup waits for a lock (the schema advisory lock, or a
+/// table lock the DDL needs) before failing. Matches the request log store: a stuck holder becomes
+/// a startup error instead of a silent hang that only a liveness probe ends.
+const SCHEMA_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// First key of every schema advisory lock, so that the per-store second key only has to be
 /// unique among agentgateway stores. The two-key form never collides with single-key advisory
@@ -127,6 +127,7 @@ const SCHEMA_LOCK_NAMESPACE: i32 = i32::from_be_bytes(*b"agwy");
 /// selects the advisory lock key, so it must never change.
 pub const BUDGET_SCHEMA_LOCK: &str = "budget_usage";
 pub const CONFIG_SCHEMA_LOCK: &str = "agw_config_resources";
+pub const CAPACITY_SCHEMA_LOCK: &str = "capacity_usage";
 
 /// Scoped to the transaction, so it cannot leak into the pool.
 const SET_SCHEMA_LOCK_TIMEOUT: &str = "SELECT set_config('lock_timeout', $1, true)";
@@ -161,9 +162,20 @@ pub async fn begin_postgres_schema_init(
 	pool: &PgPool,
 	store: &'static str,
 ) -> anyhow::Result<Transaction<'static, Postgres>> {
+	begin_postgres_schema_init_within(pool, store, SCHEMA_LOCK_TIMEOUT).await
+}
+
+/// [`begin_postgres_schema_init`] with a lock timeout of `lock_timeout` instead of the startup
+/// default, for a store whose schema initialization runs inside a shorter bound of its own.
+pub async fn begin_postgres_schema_init_within(
+	pool: &PgPool,
+	store: &'static str,
+	lock_timeout: Duration,
+) -> anyhow::Result<Transaction<'static, Postgres>> {
+	let lock_timeout = format!("{}ms", lock_timeout.as_millis());
 	info!(
 		store,
-		lock_timeout = SCHEMA_LOCK_TIMEOUT,
+		lock_timeout = lock_timeout.as_str(),
 		"initializing database schema"
 	);
 	let mut tx = pool
@@ -171,7 +183,7 @@ pub async fn begin_postgres_schema_init(
 		.await
 		.with_context(|| format!("failed to begin {store} schema transaction"))?;
 	sqlx::query(SET_SCHEMA_LOCK_TIMEOUT)
-		.bind(SCHEMA_LOCK_TIMEOUT)
+		.bind(lock_timeout)
 		.execute(&mut *tx)
 		.await
 		.with_context(|| format!("failed to configure {store} schema lock timeout"))?;
@@ -189,7 +201,7 @@ mod tests {
 	use super::*;
 
 	/// Every store that initializes a Postgres schema through [`begin_postgres_schema_init`].
-	const STORES: &[&str] = &[BUDGET_SCHEMA_LOCK, CONFIG_SCHEMA_LOCK];
+	const STORES: &[&str] = &[BUDGET_SCHEMA_LOCK, CONFIG_SCHEMA_LOCK, CAPACITY_SCHEMA_LOCK];
 
 	#[test]
 	fn schema_lock_is_transaction_scoped() {
@@ -204,6 +216,11 @@ mod tests {
 		assert_eq!(SCHEMA_LOCK_NAMESPACE, 0x6167_7779);
 		assert_eq!(schema_lock_key(""), 0x811c_9dc5_u32 as i32);
 		assert_eq!(schema_lock_key("a"), 0xe40c_292c_u32 as i32);
+		// The capacity store's key before it moved onto this helper (conxai/capacity-schema-lock).
+		assert_eq!(
+			schema_lock_key(CAPACITY_SCHEMA_LOCK),
+			0xebbe_6e7d_u32 as i32
+		);
 		let mut keys: Vec<_> = STORES.iter().map(|&store| schema_lock_key(store)).collect();
 		keys.sort_unstable();
 		keys.dedup();

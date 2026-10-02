@@ -95,44 +95,40 @@ fn from_db(v: i64) -> u64 {
 	u64::try_from(v).unwrap_or(0)
 }
 
-/// Advisory lock keys that serialize Postgres schema creation across replicas: the agentgateway
-/// schema-lock namespace (`"agwy"`) and FNV-1a of `"capacity_usage"`, the same scheme as the budget
-/// and config stores. Replicas running different builds share them, so they must never change.
-pub(super) const SCHEMA_LOCK_KEYS: (i32, i32) = (0x6167_7779, 0xebbe_6e7d_u32 as i32);
-
-/// Transaction-scoped, so it is released at commit or rollback and cannot leak into the pool.
-pub(super) const POSTGRES_SCHEMA_LOCK: &str = "SELECT pg_advisory_xact_lock($1, $2)";
-
-/// Transaction-local, and shorter than [`SYNC_INTERVAL`], which bounds the whole sync: a stuck
-/// lock holder fails this attempt with an error, and the next tick retries.
-pub(super) const POSTGRES_SCHEMA_LOCK_TIMEOUT: &str =
-	"SELECT set_config('lock_timeout', '2s', true)";
+/// How long Postgres schema creation waits for a lock. Shorter than [`SYNC_INTERVAL`], which
+/// bounds the whole sync: a stuck lock holder fails this attempt with an error, and the next tick
+/// retries.
+const SCHEMA_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+const _: () = assert!(SCHEMA_LOCK_TIMEOUT.as_millis() < SYNC_INTERVAL.as_millis());
 
 /// Creates the `capacity_usage` table and its index if they do not exist.
 ///
-/// On Postgres this runs under an advisory lock: `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX
-/// IF NOT EXISTS` are not safe against the same statement from another replica, and the loser of
-/// that race fails on a catalog unique index (`pg_type_typname_nsp_index`).
+/// On Postgres this runs under the shared schema advisory lock
+/// ([`crate::database::begin_postgres_schema_init`]): `CREATE TABLE IF NOT EXISTS` and `CREATE
+/// INDEX IF NOT EXISTS` are not safe against the same statement from another replica, and the
+/// loser of that race fails on a catalog unique index (`pg_type_typname_nsp_index`).
 pub(super) async fn ensure_schema(pool: &DatabasePool) -> anyhow::Result<()> {
 	match pool {
-		DatabasePool::Sqlite(pool) => sqlx::raw_sql(SCHEMA).execute(pool).await.map(|_| ()),
+		DatabasePool::Sqlite(pool) => sqlx::raw_sql(SCHEMA)
+			.execute(pool)
+			.await
+			.map(|_| ())
+			.map_err(anyhow::Error::from),
 		DatabasePool::Postgres(pool) => ensure_postgres_schema(pool).await,
 	}
 	.context("failed to initialize the capacity usage table")
 }
 
-async fn ensure_postgres_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
-	let mut tx = pool.begin().await?;
-	sqlx::query(POSTGRES_SCHEMA_LOCK_TIMEOUT)
-		.execute(&mut *tx)
-		.await?;
-	sqlx::query(POSTGRES_SCHEMA_LOCK)
-		.bind(SCHEMA_LOCK_KEYS.0)
-		.bind(SCHEMA_LOCK_KEYS.1)
-		.execute(&mut *tx)
-		.await?;
+async fn ensure_postgres_schema(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+	let mut tx = crate::database::begin_postgres_schema_init_within(
+		pool,
+		crate::database::CAPACITY_SCHEMA_LOCK,
+		SCHEMA_LOCK_TIMEOUT,
+	)
+	.await?;
 	sqlx::raw_sql(SCHEMA).execute(&mut *tx).await?;
-	tx.commit().await
+	tx.commit().await?;
+	Ok(())
 }
 
 impl CapacityRegistry {
