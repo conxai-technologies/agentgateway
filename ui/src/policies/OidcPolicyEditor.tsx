@@ -102,7 +102,13 @@ export function OidcPolicyEditor(props: {
 	);
 	const [issuer, setIssuer] = useState(props.oidc?.issuer ?? '');
 	const [clientId, setClientId] = useState(props.oidc?.clientId ?? '');
-	const [clientSecret, setClientSecret] = useState(props.oidc?.clientSecret ?? '');
+	// A secret configured as `{file: <path>}` is kept unless an inline value is typed.
+	const initialSecret = props.oidc?.clientSecret;
+	const secretFile =
+		initialSecret && typeof initialSecret === 'object' ? initialSecret.file : undefined;
+	const [clientSecret, setClientSecret] = useState(
+		typeof initialSecret === 'string' ? initialSecret : ''
+	);
 	const [redirectURI, setRedirectURI] = useState(props.oidc?.redirectURI ?? '');
 	const [scopes, setScopes] = useState(props.oidc?.scopes ?? []);
 	const [discovery, setDiscovery] = useState<SourceDraft>(() =>
@@ -130,7 +136,7 @@ export function OidcPolicyEditor(props: {
 			tokenEndpointAuth: providerMode === 'explicit' ? tokenEndpointAuth : undefined,
 			jwks: providerMode === 'explicit' ? sourceToConfig(jwks) : undefined,
 			clientId,
-			clientSecret,
+			clientSecret: clientSecret || (secretFile ? { file: secretFile } : clientSecret),
 			redirectURI,
 			scopes
 		}) as OidcDraft;
@@ -151,7 +157,7 @@ export function OidcPolicyEditor(props: {
 		const errors: OidcFieldErrors = {};
 		if (!issuer.trim()) errors.issuer = 'Issuer is required.';
 		if (!clientId.trim()) errors.clientId = 'Client ID is required.';
-		if (!clientSecret.trim()) errors.clientSecret = 'Client secret is required.';
+		if (!clientSecret.trim() && !secretFile) errors.clientSecret = 'Client secret is required.';
 		if (!redirectURI.trim()) errors.redirectURI = 'Redirect URI is required.';
 		if (providerMode === 'discovery') {
 			const discoveryError = validateSource(discovery, false);
@@ -356,7 +362,7 @@ export function OidcPolicyEditor(props: {
 							setClientSecret(event.target.value);
 							clearFieldError('clientSecret');
 						}}
-						placeholder="OAuth2 client secret"
+						placeholder={secretFile ? `Read from ${secretFile}` : 'OAuth2 client secret'}
 					/>
 				</Field>
 				<Field
