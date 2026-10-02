@@ -175,7 +175,9 @@ impl ConfigResourceStore {
 				})
 			},
 			DatabasePool::Postgres(pool) => {
-				sqlx::raw_sql(POSTGRES_SCHEMA).execute(pool).await?;
+				let mut tx = crate::database::begin_postgres_schema_init(pool, SCHEMA_LOCK_STORE).await?;
+				sqlx::raw_sql(POSTGRES_SCHEMA).execute(&mut *tx).await?;
+				tx.commit().await?;
 				let notification_id = uuid::Uuid::new_v4().to_string();
 				let mut listener = PgListener::connect_with(pool).await?;
 				listener.listen(POSTGRES_CHANGE_CHANNEL).await?;
@@ -1885,6 +1887,9 @@ CREATE TABLE IF NOT EXISTS agw_config_resources (
 CREATE INDEX IF NOT EXISTS idx_agw_config_resources_kind_updated
 	ON agw_config_resources(kind, updated_at);
 "#;
+
+/// Names the advisory lock that serializes Postgres schema initialization across replicas.
+pub(crate) const SCHEMA_LOCK_STORE: &str = "agw_config_resources";
 
 const POSTGRES_CHANGE_CHANNEL: &str = "agentgateway_config_changed";
 
