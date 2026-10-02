@@ -4868,7 +4868,10 @@ type Retry struct {
 	Precondition string `protobuf:"bytes,4,opt,name=precondition,proto3" json:"precondition,omitempty"`
 	// CEL expression evaluated against each response. A response is retried when its status
 	// code is in retry_status_codes or this expression evaluates to true.
-	Condition     string `protobuf:"bytes,5,opt,name=condition,proto3" json:"condition,omitempty"`
+	Condition string `protobuf:"bytes,5,opt,name=condition,proto3" json:"condition,omitempty"`
+	// Maximum request body size, in bytes, buffered for replay on retry. Requests with a
+	// larger body are not retried. Defaults to 64KiB; values above 32MiB are clamped.
+	MaxBufferSize *uint32 `protobuf:"varint,6,opt,name=max_buffer_size,json=maxBufferSize,proto3,oneof" json:"max_buffer_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4936,6 +4939,13 @@ func (x *Retry) GetCondition() string {
 		return x.Condition
 	}
 	return ""
+}
+
+func (x *Retry) GetMaxBufferSize() uint32 {
+	if x != nil && x.MaxBufferSize != nil {
+		return *x.MaxBufferSize
+	}
+	return 0
 }
 
 type Delay struct {
@@ -18331,13 +18341,15 @@ const file_resource_proto_rawDesc = "" +
 	"\aTimeout\x123\n" +
 	"\arequest\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\arequest\x12B\n" +
 	"\x0fbackend_request\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x0ebackendRequest\x12>\n" +
-	"\rresponse_idle\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\fresponseIdle\"\xc8\x01\n" +
+	"\rresponse_idle\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\fresponseIdle\"\x89\x02\n" +
 	"\x05Retry\x12,\n" +
 	"\x12retry_status_codes\x18\x01 \x03(\x05R\x10retryStatusCodes\x12\x1a\n" +
 	"\battempts\x18\x02 \x01(\x05R\battempts\x123\n" +
 	"\abackoff\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\abackoff\x12\"\n" +
 	"\fprecondition\x18\x04 \x01(\tR\fprecondition\x12\x1c\n" +
-	"\tcondition\x18\x05 \x01(\tR\tcondition\"#\n" +
+	"\tcondition\x18\x05 \x01(\tR\tcondition\x12+\n" +
+	"\x0fmax_buffer_size\x18\x06 \x01(\rH\x00R\rmaxBufferSize\x88\x01\x01B\x12\n" +
+	"\x10_max_buffer_size\"#\n" +
 	"\x05Delay\x12\x1a\n" +
 	"\bduration\x18\x01 \x01(\tR\bduration\"\x90\x05\n" +
 	"\x11BackendAuthPolicy\x12J\n" +
@@ -20432,6 +20444,7 @@ func file_resource_proto_init() {
 		(*GuardrailBackend_OpenaiModeration)(nil),
 	}
 	file_resource_proto_msgTypes[16].OneofWrappers = []any{}
+	file_resource_proto_msgTypes[18].OneofWrappers = []any{}
 	file_resource_proto_msgTypes[20].OneofWrappers = []any{
 		(*BackendAuthPolicy_Passthrough)(nil),
 		(*BackendAuthPolicy_Key)(nil),

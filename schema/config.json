@@ -8212,6 +8212,15 @@
               "type": "null"
             }
           ]
+        },
+        "maxBufferSize": {
+          "description": "Maximum request body size, in bytes, buffered in memory so the request can be replayed on a\nretry. Requests with a larger body are sent once and not retried.\nDefaults to 64KiB. Values above 32MiB are clamped to 32MiB.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
         }
       },
       "additionalProperties": false,
