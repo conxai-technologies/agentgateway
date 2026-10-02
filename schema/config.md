@@ -41,6 +41,9 @@
 |`config.database`|object|Primary database used by local runtime features.|
 |`config.database.url`|string|Connection URL for the request log database. A postgres:// or postgresql:// URL uses Postgres; any other value is treated as a SQLite database.|
 |`config.database.maxConnections`|integer|Maximum number of connections to open in this database's connection pool. Defaults to 5.<br>When the request log and config stores have matching database settings, they share one pool<br>with this limit.|
+|`config.database.auth`|object|How to authenticate to a PostgreSQL database. When unset, the credentials in `url` are used.|
+|`config.database.auth.awsRdsIam`|object|Amazon RDS / Aurora IAM database authentication. The password is a short-lived token<br>signed with the AWS default credential chain (for example EKS Pod Identity or IRSA). The<br>token is renewed in the background; it is only checked when a connection is opened, so<br>open connections are not affected when it expires. `url` must name the database user,<br>must not contain a password, and must use `sslmode=require`, `verify-ca` or `verify-full`.<br>Pass the RDS CA bundle with `sslrootcert=<path>` in `url` or `PGSSLROOTCERT`.|
+|`config.database.auth.awsRdsIam.region`|string|AWS region of the database. Defaults to the region of the AWS SDK environment<br>(`AWS_REGION` or the active profile).|
 |`config.storage`|object|Controls whether UI-managed configuration is written to the config file or a DB overlay.|
 |`config.storage.mode`|enum|Possible values: `file`, `hybrid`, `readOnly`.|
 |`config.caAddress`|string|Address of the Certificate Authority used to issue SPIFFE certificates.|
@@ -93,6 +96,9 @@
 |`config.logging.database`|object|Log-store database configuration; enables request logging to a database backend.|
 |`config.logging.database.url`|string|Connection URL for the request log database. A postgres:// or postgresql:// URL uses Postgres; any other value is treated as a SQLite database.|
 |`config.logging.database.maxConnections`|integer|Maximum number of connections to open in this database's connection pool. Defaults to 5.<br>When the request log and config stores have matching database settings, they share one pool<br>with this limit.|
+|`config.logging.database.auth`|object|How to authenticate to a PostgreSQL database. When unset, the credentials in `url` are used.|
+|`config.logging.database.auth.awsRdsIam`|object|Amazon RDS / Aurora IAM database authentication. The password is a short-lived token<br>signed with the AWS default credential chain (for example EKS Pod Identity or IRSA). The<br>token is renewed in the background; it is only checked when a connection is opened, so<br>open connections are not affected when it expires. `url` must name the database user,<br>must not contain a password, and must use `sslmode=require`, `verify-ca` or `verify-full`.<br>Pass the RDS CA bundle with `sslrootcert=<path>` in `url` or `PGSSLROOTCERT`.|
+|`config.logging.database.auth.awsRdsIam.region`|string|AWS region of the database. Defaults to the region of the AWS SDK environment<br>(`AWS_REGION` or the active profile).|
 |`config.metrics`|object|Metrics configuration, including metric removal and custom fields.|
 |`config.metrics.remove`|[]string|Metric names to exclude from collection.|
 |`config.metrics.fields`|object|Custom fields to add to all metrics.|
