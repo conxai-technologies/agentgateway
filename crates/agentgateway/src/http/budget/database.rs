@@ -17,6 +17,8 @@ const SQLITE_SCHEMA: &str = include_str!("sqlite_schema.sql");
 const POSTGRES_SCHEMA: &str = include_str!("postgres_schema.sql");
 const SQLITE_UPSERT: &str = include_str!("sqlite_upsert.sql");
 const POSTGRES_UPSERT: &str = include_str!("postgres_upsert.sql");
+/// Names the advisory lock that serializes Postgres schema initialization across replicas.
+pub(crate) const SCHEMA_LOCK_STORE: &str = "budget_usage";
 
 impl BudgetPolicy {
 	/// Initializes and migrates the budget tables, prunes expired rows, preloads every persisted
@@ -51,14 +53,30 @@ impl BudgetPolicy {
 					.context("failed to prune expired budget usage")?;
 			},
 			crate::database::DatabasePool::Postgres(pool) => {
-				sqlx::raw_sql(POSTGRES_SCHEMA)
-					.execute(pool)
+				let mut tx = crate::database::begin_postgres_schema_init(pool, SCHEMA_LOCK_STORE)
 					.await
 					.context("failed to initialize budget database")?;
-				sqlx::query("ALTER TABLE budget_usage ADD COLUMN IF NOT EXISTS unit TEXT")
-					.execute(pool)
+				sqlx::raw_sql(POSTGRES_SCHEMA)
+					.execute(&mut *tx)
 					.await
-					.context("failed to migrate budget database schema")?;
+					.context("failed to initialize budget database")?;
+				// Inspect before altering: ALTER TABLE takes an ACCESS EXCLUSIVE lock even when the
+				// column exists, which would block every other replica's flushes on each startup.
+				let has_unit = sqlx::query_scalar::<_, bool>(
+					"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'budget_usage' AND column_name = 'unit')",
+				)
+				.fetch_one(&mut *tx)
+				.await
+				.context("failed to inspect budget database schema")?;
+				if !has_unit {
+					sqlx::query("ALTER TABLE budget_usage ADD COLUMN IF NOT EXISTS unit TEXT")
+						.execute(&mut *tx)
+						.await
+						.context("failed to migrate budget database schema")?;
+				}
+				tx.commit()
+					.await
+					.context("failed to initialize budget database")?;
 				sqlx::query("DELETE FROM budget_usage WHERE window_end <= $1")
 					.bind(now.timestamp_millis())
 					.execute(pool)
