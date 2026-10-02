@@ -264,7 +264,7 @@ impl RemoteRateLimit {
 			.iter()
 			.filter(|e| e.limit_type == limit_type)
 		{
-			match self.eval_descriptor_entry(&exec, desc_entry, limit_type, default_cost) {
+			match self.eval_descriptor_entry(&exec, desc_entry, &limit_type, default_cost) {
 				Ok(Some(descriptor)) => {
 					descriptors.push(descriptor);
 					descriptor_costs.push((desc_entry.cost.clone(), desc_entry.on_error));
@@ -327,7 +327,7 @@ impl RemoteRateLimit {
 		&self,
 		exec: &cel::Executor<'_>,
 		desc_entry: &DescriptorEntry,
-		limit_type: RateLimitType,
+		limit_type: &RateLimitType,
 		default_cost: Option<u64>,
 	) -> anyhow::Result<Option<RateLimitDescriptor>> {
 		let skip = desc_entry.on_error == OnError::Skip;
@@ -351,7 +351,7 @@ impl RemoteRateLimit {
 			limit_type,
 			kv_pairs.join(", ")
 		);
-		let hits_addend = if desc_entry.cost.is_some() && limit_type == RateLimitType::Tokens {
+		let hits_addend = if desc_entry.cost.is_some() && *limit_type == RateLimitType::Tokens {
 			// Skip sending anything on the target request side; the cost computation is specified to be on the response (amend) side
 			Some(0)
 		} else {
