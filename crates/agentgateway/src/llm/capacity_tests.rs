@@ -583,3 +583,20 @@ async fn reload_keeps_the_counters() {
 		.unwrap();
 	assert_close(tracker_of(&other, "a").headroom(), 1.0);
 }
+
+#[test]
+fn postgres_schema_lock_is_stable_and_transaction_scoped() {
+	// FNV-1a, as crate::database derives the budget and config store keys.
+	let fnv1a = |s: &str| {
+		s.bytes().fold(0x811c_9dc5_u32, |h, b| {
+			(h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+		}) as i32
+	};
+	assert_eq!(
+		store::SCHEMA_LOCK_KEYS,
+		(i32::from_be_bytes(*b"agwy"), fnv1a("capacity_usage"))
+	);
+	// A session-level lock or lock_timeout would outlive the transaction and leak into the pool.
+	assert!(store::POSTGRES_SCHEMA_LOCK.contains("pg_advisory_xact_lock("));
+	assert!(store::POSTGRES_SCHEMA_LOCK_TIMEOUT.ends_with(", true)"));
+}
