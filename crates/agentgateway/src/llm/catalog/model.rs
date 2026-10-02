@@ -187,6 +187,9 @@ pub struct Rates {
 	/// Cost per 1M tokens written to cache.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub cache_write: Option<Money>,
+	/// Cost per 1M tokens written to cache with a 1-hour TTL. Falls back to cacheWrite if unset.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub cache_write_1h: Option<Money>,
 	/// Cost per 1M reasoning tokens. Falls back to the output rate if unset.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub reasoning: Option<Money>,
@@ -217,6 +220,7 @@ impl Rates {
 			output: pick(&self.output, &delta.output),
 			cache_read: pick(&self.cache_read, &delta.cache_read),
 			cache_write: pick(&self.cache_write, &delta.cache_write),
+			cache_write_1h: pick(&self.cache_write_1h, &delta.cache_write_1h),
 			reasoning: pick(&self.reasoning, &delta.reasoning),
 			input_audio: pick(&self.input_audio, &delta.input_audio),
 			output_audio: pick(&self.output_audio, &delta.output_audio),
@@ -294,7 +298,9 @@ const TOKENS_PER_UNIT: u64 = 1_000_000;
 pub struct Usage {
 	pub input: u64,
 	pub cache_read: u64,
+	/// Cache writes not billed at a dedicated 1-hour rate.
 	pub cache_write: u64,
+	pub cache_write_1h: u64,
 	pub output: u64,
 	pub reasoning: u64,
 	pub input_audio: u64,
@@ -308,6 +314,7 @@ impl Usage {
 			.input
 			.saturating_add(self.cache_read)
 			.saturating_add(self.cache_write)
+			.saturating_add(self.cache_write_1h)
 			.saturating_add(self.input_audio)
 	}
 }
@@ -317,6 +324,7 @@ pub struct Breakdown {
 	pub input: Decimal,
 	pub cache_read: Decimal,
 	pub cache_write: Decimal,
+	pub cache_write_1h: Decimal,
 	pub output: Decimal,
 	pub reasoning: Decimal,
 	pub input_audio: Decimal,
@@ -329,6 +337,7 @@ impl Breakdown {
 		self.input
 			+ self.cache_read
 			+ self.cache_write
+			+ self.cache_write_1h
 			+ self.output
 			+ self.reasoning
 			+ self.input_audio
@@ -345,10 +354,12 @@ impl Rates {
 		let reasoning_rate = self.reasoning.as_ref().or(self.output.as_ref());
 		let input_audio_rate = self.input_audio.as_ref().or(self.input.as_ref());
 		let output_audio_rate = self.output_audio.as_ref().or(self.output.as_ref());
+		let cache_write_1h_rate = self.cache_write_1h.as_ref().or(self.cache_write.as_ref());
 		Breakdown {
 			input: line(usage.input, self.input.as_ref()) / unit,
 			cache_read: line(usage.cache_read, self.cache_read.as_ref()) / unit,
 			cache_write: line(usage.cache_write, self.cache_write.as_ref()) / unit,
+			cache_write_1h: line(usage.cache_write_1h, cache_write_1h_rate) / unit,
 			output: line(usage.output, self.output.as_ref()) / unit,
 			reasoning: line(usage.reasoning, reasoning_rate) / unit,
 			input_audio: line(usage.input_audio, input_audio_rate) / unit,
@@ -624,6 +635,7 @@ mod tests {
 				output: Some(m("15")),
 				cache_read: Some(m("0.3")),
 				cache_write: Some(m("3.75")),
+				cache_write_1h: Some(m("6")),
 				reasoning: Some(m("15")),
 				input_audio: Some(m("40")),
 				output_audio: Some(m("80")),
@@ -636,6 +648,7 @@ mod tests {
 			input: 1000,
 			cache_read: 2000,
 			cache_write: 500,
+			cache_write_1h: 1000,
 			output: 500,
 			reasoning: 100,
 			input_audio: 50,
@@ -646,12 +659,51 @@ mod tests {
 		assert_eq!(b.input, d("0.003"));
 		assert_eq!(b.cache_read, d("0.0006"));
 		assert_eq!(b.cache_write, d("0.001875"));
+		assert_eq!(b.cache_write_1h, d("0.006"));
 		assert_eq!(b.output, d("0.0075"));
 		assert_eq!(b.reasoning, d("0.0015"));
 		assert_eq!(b.input_audio, d("0.002"));
 		assert_eq!(b.output_audio, d("0.002"));
 		assert_eq!(b.total(), e.price(&u));
-		assert_eq!(b.total(), d("0.018475"));
+		assert_eq!(b.total(), d("0.024475"));
+	}
+
+	#[test]
+	fn absent_1h_cache_write_rate_falls_back_to_cache_write() {
+		let e = entry(
+			Rates {
+				cache_write: Some(m("3.75")),
+				..rates("3", "15")
+			},
+			vec![],
+		);
+		let b = e.breakdown(&Usage {
+			cache_write: 1000,
+			cache_write_1h: 2000,
+			..Default::default()
+		});
+		assert_eq!(b.cache_write, d("0.00375"));
+		assert_eq!(
+			b.cache_write_1h,
+			d("0.0075"),
+			"billed at the cacheWrite rate"
+		);
+	}
+
+	#[test]
+	fn cache_write_1h_rate_round_trips_and_overlays() {
+		let json = r#"{"providers":{"anthropic":{"models":{"m":{"rates":{"cacheWrite":"3.75","cacheWrite1h":"6"}}}}}}"#;
+		let c = super::from_json(json).unwrap();
+		let rates = &c.providers["anthropic"].models["m"].rates;
+		assert_eq!(rates.cache_write_1h, Some(m("6")));
+		assert_eq!(serde_json::to_string(&c).unwrap(), json);
+
+		let overlaid = rates.overlay(&Rates {
+			cache_write_1h: Some(m("7")),
+			..Default::default()
+		});
+		assert_eq!(overlaid.cache_write_1h, Some(m("7")), "delta wins");
+		assert_eq!(overlaid.cache_write, Some(m("3.75")), "base kept");
 	}
 
 	#[test]

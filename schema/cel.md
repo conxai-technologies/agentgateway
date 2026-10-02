@@ -63,6 +63,7 @@
 |`llm.inputAudioTokens`|integer|The number of audio tokens in the input/prompt.|
 |`llm.cachedInputTokens`|integer|The number of tokens in the input/prompt read from cache (savings)|
 |`llm.cacheCreationInputTokens`|integer|Tokens written to cache (costs)|
+|`llm.cacheCreation1hInputTokens`|integer|Tokens written to cache with a 1-hour TTL, a subset of cacheCreationInputTokens (costs)|
 |`llm.outputTokens`|integer|The number of tokens in the output/completion.|
 |`llm.outputImageTokens`|integer|The number of image tokens in the output/completion.|
 |`llm.outputTextTokens`|integer|The number of text tokens in the output/completion.|
@@ -97,6 +98,7 @@
 |`llm.cost.output`|number||
 |`llm.cost.cacheRead`|number||
 |`llm.cost.cacheWrite`|number||
+|`llm.cost.cacheWrite1h`|number||
 |`llm.cost.reasoning`|number||
 |`llm.cost.inputAudio`|number||
 |`llm.cost.outputAudio`|number||
@@ -106,6 +108,7 @@
 |`llm.costRates.output`|number||
 |`llm.costRates.cacheRead`|number||
 |`llm.costRates.cacheWrite`|number||
+|`llm.costRates.cacheWrite1h`|number||
 |`llm.costRates.reasoning`|number||
 |`llm.costRates.inputAudio`|number||
 |`llm.costRates.outputAudio`|number||

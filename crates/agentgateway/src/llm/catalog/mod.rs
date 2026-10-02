@@ -371,11 +371,15 @@ impl CatalogSnapshot {
 
 		let prices_cache_read = rates.cache_read.is_some();
 		let prices_cache_write = rates.cache_write.is_some();
-		let usage = if prices_cache_read && prices_cache_write {
+		let prices_cache_write_1h = rates.cache_write_1h.is_some();
+		let mut usage = if prices_cache_read && prices_cache_write {
 			provisional_usage
 		} else {
 			usage_for(convention, resp, prices_cache_read, prices_cache_write)
 		};
+		if prices_cache_write_1h {
+			split_cache_write_1h(&mut usage, resp, prices_cache_write);
+		}
 		let breakdown = rates.breakdown(&usage);
 		let cost = CostBreakdown::from(&breakdown);
 		let cost_rates = CostRates::from(&rates);
@@ -390,6 +394,7 @@ impl CatalogSnapshot {
 				"contextTokens": context_tokens,
 				"pricesCacheRead": prices_cache_read,
 				"pricesCacheWrite": prices_cache_write,
+				"pricesCacheWrite1h": prices_cache_write_1h,
 				"usage": &usage,
 				"rates": cost_rates,
 				"cost": cost,
@@ -448,6 +453,9 @@ pub struct CostRates {
 	#[dynamic(rename = "cacheWrite")]
 	pub cache_write: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
+	#[dynamic(rename = "cacheWrite1h")]
+	pub cache_write_1h: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	pub reasoning: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	#[dynamic(rename = "inputAudio")]
@@ -468,6 +476,7 @@ impl From<&Rates> for CostRates {
 			output: f(&r.output),
 			cache_read: f(&r.cache_read),
 			cache_write: f(&r.cache_write),
+			cache_write_1h: f(&r.cache_write_1h),
 			reasoning: f(&r.reasoning),
 			input_audio: f(&r.input_audio),
 			output_audio: f(&r.output_audio),
@@ -482,13 +491,14 @@ fn breakdown_f64(d: Decimal) -> f64 {
 
 impl Breakdown {
 	// (CEL field name, value) pairs. `total` is computed, the rest are stored.
-	fn components(&self) -> [(&'static str, Decimal); 9] {
+	fn components(&self) -> [(&'static str, Decimal); 10] {
 		[
 			("total", self.total()),
 			("input", self.input),
 			("output", self.output),
 			("cacheRead", self.cache_read),
 			("cacheWrite", self.cache_write),
+			("cacheWrite1h", self.cache_write_1h),
 			("reasoning", self.reasoning),
 			("inputAudio", self.input_audio),
 			("outputAudio", self.output_audio),
@@ -507,6 +517,8 @@ pub struct CostBreakdown {
 	pub cache_read: f64,
 	#[dynamic(rename = "cacheWrite")]
 	pub cache_write: f64,
+	#[dynamic(rename = "cacheWrite1h")]
+	pub cache_write_1h: f64,
 	pub reasoning: f64,
 	#[dynamic(rename = "inputAudio")]
 	pub input_audio: f64,
@@ -523,6 +535,7 @@ impl From<&Breakdown> for CostBreakdown {
 			output: breakdown_f64(b.output),
 			cache_read: breakdown_f64(b.cache_read),
 			cache_write: breakdown_f64(b.cache_write),
+			cache_write_1h: breakdown_f64(b.cache_write_1h),
 			reasoning: breakdown_f64(b.reasoning),
 			input_audio: breakdown_f64(b.input_audio),
 			output_audio: breakdown_f64(b.output_audio),
@@ -539,6 +552,7 @@ impl From<CostBreakdown> for Breakdown {
 			output: d(b.output),
 			cache_read: d(b.cache_read),
 			cache_write: d(b.cache_write),
+			cache_write_1h: d(b.cache_write_1h),
 			reasoning: d(b.reasoning),
 			input_audio: d(b.input_audio),
 			output_audio: d(b.output_audio),
@@ -549,7 +563,7 @@ impl From<CostBreakdown> for Breakdown {
 
 impl ::cel::types::dynamic::DynamicType for Breakdown {
 	fn materialize(&self) -> ::cel::Value<'_> {
-		let mut map = vector_map::VecMap::with_capacity(9);
+		let mut map = vector_map::VecMap::with_capacity(10);
 		for (name, value) in self.components() {
 			map.insert(
 				::cel::objects::KeyRef::from(name),
@@ -751,6 +765,8 @@ fn usage_for(
 		input,
 		cache_read,
 		cache_write,
+		// Split out by `split_cache_write_1h` only when the catalog has a 1-hour rate.
+		cache_write_1h: 0,
 		output,
 		reasoning,
 		input_audio,
@@ -758,6 +774,22 @@ fn usage_for(
 		// Pages are billed as pages, so they skip the cache-convention token arithmetic above.
 		pages: resp.pages.unwrap_or(0),
 	}
+}
+
+/// Moves 1-hour cache writes, a provider-reported subset of all cache writes, into their own
+/// bucket: out of `cache_write` when cache writes are priced, or out of `input` when `usage_for`
+/// folded them in there.
+fn split_cache_write_1h(usage: &mut Usage, resp: &LLMResponse, prices_cache_write: bool) {
+	let cache_write_1h = resp
+		.cache_creation_1h_input_tokens
+		.unwrap_or(0)
+		.min(resp.cache_creation_input_tokens.unwrap_or(0));
+	if prices_cache_write {
+		usage.cache_write = usage.cache_write.saturating_sub(cache_write_1h);
+	} else {
+		usage.input = usage.input.saturating_sub(cache_write_1h);
+	}
+	usage.cache_write_1h = cache_write_1h;
 }
 
 #[cfg(test)]
@@ -1016,6 +1048,102 @@ mod tests {
 		assert_eq!(u.input, 1000, "Anthropic input_tokens is already fresh");
 		assert_eq!(u.cache_read, 300);
 		assert_eq!(u.cache_write, 200);
+	}
+
+	#[test]
+	fn splits_1h_cache_writes_out_of_their_bucket() {
+		let resp = LLMResponse {
+			input_tokens: Some(1000),
+			cache_creation_input_tokens: Some(300),
+			cache_creation_1h_input_tokens: Some(200),
+			..Default::default()
+		};
+		for (convention, input, input_with_5m) in [
+			(CacheTokenConvention::InputExcludesCache, 1000, 1100),
+			(CacheTokenConvention::InputIncludesCache, 700, 800),
+		] {
+			let mut u = usage_for(convention, &resp, true, true);
+			assert_eq!(u.cache_write, 300, "unsplit: all writes in one bucket");
+			split_cache_write_1h(&mut u, &resp, true);
+			assert_eq!(u.input, input);
+			assert_eq!(u.cache_write, 100, "5-minute writes");
+			assert_eq!(u.cache_write_1h, 200);
+
+			// Unpriced 5-minute writes stay folded into input; 1h writes still split out.
+			let mut u = usage_for(convention, &resp, true, false);
+			split_cache_write_1h(&mut u, &resp, false);
+			assert_eq!(u.input, input_with_5m);
+			assert_eq!(u.cache_write, 0);
+			assert_eq!(u.cache_write_1h, 200);
+		}
+	}
+
+	#[test]
+	fn clamps_1h_cache_writes_to_total_cache_writes() {
+		let resp = LLMResponse {
+			input_tokens: Some(1000),
+			cache_creation_input_tokens: Some(100),
+			cache_creation_1h_input_tokens: Some(500),
+			..Default::default()
+		};
+		let mut u = usage_for(CacheTokenConvention::InputExcludesCache, &resp, true, true);
+		split_cache_write_1h(&mut u, &resp, true);
+		assert_eq!(u.cache_write, 0);
+		assert_eq!(u.cache_write_1h, 100);
+	}
+
+	#[test]
+	fn anthropic_prices_1h_cache_writes_at_their_own_rate() {
+		// Anthropic bills 5-minute cache writes at 1.25x input and 1-hour writes at 2x input.
+		let body = bytes::Bytes::from_static(
+			br#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-5",
+			"content":[{"type":"text","text":"Hi"}],"stop_reason":"end_turn","stop_sequence":null,
+			"usage":{"input_tokens":1000000,"output_tokens":0,"cache_read_input_tokens":0,
+			"cache_creation_input_tokens":3000000,"cache_creation":
+			{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":2000000}}}"#,
+		);
+		let passthrough: agent_llm::types::messages::Response = serde_json::from_slice(&body).unwrap();
+		let translated =
+			agent_llm::conversion::messages::from_completions::translate_response(&body).unwrap();
+		let responses = [
+			agent_llm::types::ResponseType::to_llm_response(&passthrough, Default::default()),
+			translated.to_llm_response(Default::default()),
+		];
+		let rates = r#""input":"3","output":"15","cacheRead":"0.3","cacheWrite":"3.75""#;
+		let with_1h = CatalogSnapshot::parse(&format!(
+			r#"{{"providers":{{"anthropic":{{"models":{{"claude-sonnet-4-5":{{"rates":{{{rates},"cacheWrite1h":"6"}}}}}}}}}}}}"#
+		))
+		.unwrap();
+		let without_1h = CatalogSnapshot::parse(&format!(
+			r#"{{"providers":{{"anthropic":{{"models":{{"claude-sonnet-4-5":{{"rates":{{{rates}}}}}}}}}}}}}"#
+		))
+		.unwrap();
+		for resp in &responses {
+			assert_eq!(resp.cache_creation_1h_input_tokens, Some(2_000_000));
+			let project = |snap: &CatalogSnapshot| {
+				snap
+					.project(
+						"anthropic",
+						"claude-sonnet-4-5",
+						resp,
+						CacheTokenConvention::InputExcludesCache,
+					)
+					.cost
+					.expect("model is priced")
+			};
+
+			let cost = project(&with_1h);
+			assert_eq!(cost.input.to_f64(), Some(3.0));
+			assert_eq!(cost.cache_write.to_f64(), Some(3.75));
+			assert_eq!(cost.cache_write_1h.to_f64(), Some(12.0));
+			assert_eq!(cost.total().to_f64(), Some(18.75));
+
+			// Without a 1-hour rate every write is billed at cacheWrite, as before.
+			let cost = project(&without_1h);
+			assert_eq!(cost.cache_write.to_f64(), Some(11.25));
+			assert_eq!(cost.cache_write_1h.to_f64(), Some(0.0));
+			assert_eq!(cost.total().to_f64(), Some(14.25));
+		}
 	}
 
 	#[test]

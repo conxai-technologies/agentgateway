@@ -310,6 +310,7 @@ impl From<bedrock::TokenUsage> for super::ProviderUsage {
 		Self {
 			input_tokens: u.input_tokens as u64,
 			total_tokens: u.total_tokens as u64,
+			cache_creation_1h_input_tokens: u.cache_write_1h_input_tokens.map(|i| i as u64),
 			..Default::default()
 		}
 	}
@@ -1435,6 +1436,8 @@ pub mod from_completions {
 							r.response.cached_input_tokens = usage.cache_read_input_tokens.map(|i| i as u64);
 							r.response.cache_creation_input_tokens =
 								usage.cache_write_input_tokens.map(|i| i as u64);
+							r.response.cache_creation_1h_input_tokens =
+								usage.cache_write_1h_input_tokens.map(|i| i as u64);
 							if let Some(completion) = completion.take() {
 								r.response.completion = Some(vec![completion]);
 							}
@@ -2095,6 +2098,7 @@ pub mod from_messages {
 								output_tokens: 0,
 								cache_creation_input_tokens: None,
 								cache_read_input_tokens: None,
+								cache_creation: None,
 								service_tier: None,
 							},
 							input_audio_tokens: None,
@@ -2258,6 +2262,8 @@ pub mod from_messages {
 							r.response.cached_input_tokens = usage.cache_read_input_tokens.map(|i| i as u64);
 							r.response.cache_creation_input_tokens =
 								usage.cache_write_input_tokens.map(|i| i as u64);
+							r.response.cache_creation_1h_input_tokens =
+								usage.cache_write_1h_input_tokens.map(|i| i as u64);
 							if let Some(c) = completion.take() {
 								r.response.completion = Some(vec![c]);
 							}
@@ -3479,6 +3485,8 @@ pub mod from_responses {
 							r.response.cached_input_tokens = usage.cache_read_input_tokens.map(|i| i as u64);
 							r.response.cache_creation_input_tokens =
 								usage.cache_write_input_tokens.map(|i| i as u64);
+							r.response.cache_creation_1h_input_tokens =
+								usage.cache_write_1h_input_tokens.map(|i| i as u64);
 						});
 					}
 
@@ -4333,6 +4341,7 @@ impl ConverseResponseAdapter {
 				output_tokens: u.output_tokens,
 				cache_creation_input_tokens: u.cache_write_input_tokens,
 				cache_read_input_tokens: u.cache_read_input_tokens,
+				cache_creation: None,
 				service_tier: None,
 			})
 			.unwrap_or(messagest::Usage {
@@ -4340,6 +4349,7 @@ impl ConverseResponseAdapter {
 				output_tokens: 0,
 				cache_creation_input_tokens: None,
 				cache_read_input_tokens: None,
+				cache_creation: None,
 				service_tier: None,
 			});
 

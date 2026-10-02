@@ -139,6 +139,7 @@ fn build_test_request() -> crate::http::Request {
 		count_tokens: None,
 		reasoning_tokens: None,
 		cache_creation_input_tokens: None,
+		cache_creation_1h_input_tokens: None,
 		cached_input_tokens: None,
 		prompt: None,
 		completion: Some(vec!["Hello world".to_string()]),
@@ -342,6 +343,7 @@ fn llm_cost_is_exposed_to_cel_as_floats() {
 		output: dec("0.025"),
 		cache_read: dec("0"),
 		cache_write: dec("0"),
+		cache_write_1h: dec("0.01"),
 		reasoning: dec("0"),
 		input_audio: dec("0"),
 		output_audio: dec("0"),
@@ -359,10 +361,11 @@ fn llm_cost_is_exposed_to_cel_as_floats() {
 	});
 	let executor = Executor::new_request(&req);
 
-	assert!(executor.eval_bool(&Expression::new_strict("llm.cost.total == 0.545").unwrap()));
+	assert!(executor.eval_bool(&Expression::new_strict("llm.cost.total == 0.555").unwrap()));
 	assert!(executor.eval_bool(&Expression::new_strict("llm.cost.input == 0.5").unwrap()));
 	assert!(executor.eval_bool(&Expression::new_strict("llm.cost.pages == 0.02").unwrap()));
 	assert!(executor.eval_bool(&Expression::new_strict("llm.cost.cacheRead == 0.0").unwrap()));
+	assert!(executor.eval_bool(&Expression::new_strict("llm.cost.cacheWrite1h == 0.01").unwrap()));
 	assert!(executor.eval_bool(&Expression::new_strict("llm.costRates.input == 3.0").unwrap()));
 	assert!(executor.eval_bool(&Expression::new_strict("llm.costRates.perPage == 0.005").unwrap()));
 }

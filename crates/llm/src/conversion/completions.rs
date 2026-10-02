@@ -122,6 +122,7 @@ pub mod from_messages {
 				.completion_tokens_details
 				.as_ref()
 				.and_then(|d| d.reasoning_tokens),
+			cache_creation_1h_input_tokens: None,
 		});
 		let anthropic = translate_response_internal(resp)?;
 		Ok(Box::new(super::super::ResponseWithProviderUsage {
@@ -252,6 +253,7 @@ pub mod from_messages {
 					.unwrap_or(0),
 				cache_creation_input_tokens,
 				cache_read_input_tokens,
+				cache_creation: None,
 				service_tier,
 			},
 			input_audio_tokens: usage.as_ref().and_then(|u| {
@@ -614,6 +616,7 @@ pub mod from_messages {
 										output_tokens: 0,
 										cache_creation_input_tokens: None,
 										cache_read_input_tokens: None,
+										cache_creation: None,
 										service_tier: None,
 									},
 									input_audio_tokens: None,
