@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::cel::LLMContext;
 use crate::{apply, schema_de, serde_dur};
 
-pub(crate) mod database;
+mod database;
 mod metrics;
 mod status;
 

@@ -123,6 +123,11 @@ const SCHEMA_LOCK_TIMEOUT: &str = "10s";
 /// locks, such as the one SQLx migrations take.
 const SCHEMA_LOCK_NAMESPACE: i32 = i32::from_be_bytes(*b"agwy");
 
+/// Schema lock names of the stores that initialize a Postgres schema, one per store. The name
+/// selects the advisory lock key, so it must never change.
+pub const BUDGET_SCHEMA_LOCK: &str = "budget_usage";
+pub const CONFIG_SCHEMA_LOCK: &str = "agw_config_resources";
+
 /// Scoped to the transaction, so it cannot leak into the pool.
 const SET_SCHEMA_LOCK_TIMEOUT: &str = "SELECT set_config('lock_timeout', $1, true)";
 
@@ -184,10 +189,7 @@ mod tests {
 	use super::*;
 
 	/// Every store that initializes a Postgres schema through [`begin_postgres_schema_init`].
-	const STORES: &[&str] = &[
-		crate::config_store::SCHEMA_LOCK_STORE,
-		crate::http::budget::database::SCHEMA_LOCK_STORE,
-	];
+	const STORES: &[&str] = &[BUDGET_SCHEMA_LOCK, CONFIG_SCHEMA_LOCK];
 
 	#[test]
 	fn schema_lock_is_transaction_scoped() {
