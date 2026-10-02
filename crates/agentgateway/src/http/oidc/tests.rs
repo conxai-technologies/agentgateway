@@ -317,6 +317,31 @@ fn explicit_provider_config_rejects_relative_endpoints_during_deserialization() 
 	assert!(err.to_string().contains("must be an absolute http(s) URL"));
 }
 
+#[test]
+fn client_secret_is_read_inline_or_from_a_file() {
+	let config = |client_secret: serde_json::Value| {
+		serde_json::from_value::<LocalOidcConfig>(json!({
+			"issuer": TEST_ISSUER,
+			"clientId": TEST_CLIENT_ID,
+			"clientSecret": client_secret,
+			"redirectURI": "http://localhost:3000/oauth/callback"
+		}))
+	};
+
+	let inline = config(json!("client-secret")).expect("inline secret");
+	assert_eq!(inline.client_secret.expose_secret(), "client-secret");
+
+	let dir = tempfile::tempdir().expect("tempdir");
+	let path = dir.path().join("client-secret");
+	std::fs::write(&path, "from-a-file\n").expect("write secret");
+	let from_file = config(json!({ "file": path })).expect("secret from a file");
+	assert_eq!(from_file.client_secret.expose_secret(), "from-a-file");
+
+	let missing = config(json!({ "file": dir.path().join("absent") }))
+		.expect_err("a missing secret file is a config error");
+	assert!(missing.to_string().contains("absent"), "{missing}");
+}
+
 fn browser_session(raw_id_token: String) -> BrowserSession {
 	BrowserSession {
 		policy_id: PolicyId::policy("policy"),

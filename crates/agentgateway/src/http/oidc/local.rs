@@ -127,9 +127,13 @@ pub struct LocalOidcConfig {
 	/// OAuth2 client identifier used for authorization and token exchange.
 	pub client_id: String,
 
-	/// OAuth2 client secret used for token exchange.
-	#[serde(serialize_with = "crate::serdes::ser_redact")]
-	#[cfg_attr(feature = "schema", schemars(with = "String"))]
+	/// OAuth2 client secret used for token exchange, inline or `{file: <path>}`.
+	/// Surrounding whitespace is trimmed.
+	#[serde(
+		serialize_with = "crate::serdes::ser_redact",
+		deserialize_with = "crate::serdes::deser_key_from_file"
+	)]
+	#[cfg_attr(feature = "schema", schemars(with = "crate::serdes::FileOrInline"))]
 	pub client_secret: SecretString,
 
 	/// Absolute callback URI handled by the gateway.
