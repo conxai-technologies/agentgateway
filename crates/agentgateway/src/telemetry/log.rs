@@ -1155,6 +1155,7 @@ impl RequestLog {
 			retry_backoff: None,
 			jwt_sub: None,
 			retry_attempt: None,
+			retry_budget_exhausted: false,
 			error: None,
 			grpc_status: Default::default(),
 			mcp_status: Default::default(),
@@ -1332,6 +1333,8 @@ pub struct RequestLog {
 	pub jwt_sub: Option<String>,
 
 	pub retry_attempt: Option<u8>,
+	/// Set when a retry was skipped because the retry budget was exhausted.
+	pub retry_budget_exhausted: bool,
 	pub error: Option<String>,
 
 	pub grpc_status: AsyncLog<u8>,
@@ -1548,6 +1551,13 @@ impl Drop for DropOnLog {
 					.retries
 					.get_or_create(&http_labels)
 					.inc_by(retry_count as u64);
+			}
+			if log.retry_budget_exhausted {
+				log
+					.metrics
+					.retries_budget_exhausted
+					.get_or_create(&http_labels)
+					.inc();
 			}
 			if !is_tcp {
 				let labels = http_labels.into();

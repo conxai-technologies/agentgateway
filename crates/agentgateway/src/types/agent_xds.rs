@@ -2615,6 +2615,8 @@ fn traffic_policy_from_proto(
 				codes: codes.into_boxed_slice(),
 				precondition,
 				condition,
+				// Retry budgets are not yet exposed over xDS.
+				budget: None,
 			})
 		},
 		Some(tps::Kind::Delay(d)) => TrafficPolicy::Delay(http::delay::Policy {
