@@ -324,6 +324,13 @@ pub struct DatabaseLoggingConfig {
 	/// behavior is preserved: content captured by CEL expressions is also stored in the payload.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub llm: Option<DatabaseLlmMode>,
+	/// CEL expression that decides per request whether prompt and completion content is stored in
+	/// the payload table. The request itself is always stored. An expression that reads only the
+	/// connection, request headers, backend and authentication claims (for example `apiKey` or
+	/// `jwt`) is decided before the LLM request is processed, and with `llm: full` no content is
+	/// captured for requests that fail it. Other expressions are evaluated when the request is logged.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub payload_filter: Option<Arc<cel::Expression>>,
 	/// Database-only fields to add, computed from CEL expressions.
 	#[serde(default, skip_serializing_if = "OrderedStringMap::is_empty")]
 	#[cfg_attr(

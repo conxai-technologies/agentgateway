@@ -178,7 +178,11 @@ pub fn apply_logging_policy_to_log(log: &mut RequestLog, lp: &frontend::LoggingP
 	}
 	if let Some(database) = &lp.database {
 		log.database_llm = database.llm;
-		if database.llm == Some(frontend::DatabaseLlmMode::Full) {
+		log.cel.database_payload_filter = database.payload_filter.clone();
+		if let Some(filter) = &database.payload_filter {
+			// Capture for `llm: full` waits for `decide_database_payload`, once the request is known.
+			log.cel.ctx().register_log_expression(filter);
+		} else if database.llm == Some(frontend::DatabaseLlmMode::Full) {
 			log.cel.ctx().register_log_llm_payload();
 		}
 		if !database.add.is_empty() {
@@ -2723,6 +2727,8 @@ async fn make_backend_call(
 			req
 				.extensions_mut()
 				.get_or_insert_with(|| crate::transport::BufferLimit::new(llm::DEFAULT_BUFFER_LIMIT));
+			// Request policies have run, and no LLM content has been read yet.
+			log.add(|l| l.decide_database_payload(&req));
 			// LLM requires CEL execution after the snapshot so we do not clear extensions
 			let mut req = req.take_and_snapshot_without_clearing_extensions(log.as_mut())?;
 			let route_type = resolve_llm_route_type(

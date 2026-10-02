@@ -587,6 +587,8 @@ pub struct CelLogging {
 	pub otlp_filter: Option<Arc<cel::Expression>>,
 	pub otlp_fields: LoggingFields,
 	pub database_fields: LoggingFields,
+	/// Decides whether LLM content is stored in the database payload table.
+	pub database_payload_filter: Option<Arc<cel::Expression>>,
 	pub metric_fields: MetricFields,
 }
 
@@ -755,6 +757,7 @@ impl CelLogging {
 			otlp_filter: None,
 			otlp_fields: LoggingFields::default(),
 			database_fields,
+			database_payload_filter: None,
 			metric_fields: metrics.metric_fields,
 		}
 	}
@@ -777,6 +780,7 @@ impl CelLogging {
 			otlp_filter,
 			otlp_fields,
 			database_fields,
+			database_payload_filter: _,
 			metric_fields,
 		} = self;
 		let mut executor = if inputs.req.is_none() && inputs.source_context.is_some() {
@@ -1119,6 +1123,7 @@ impl RequestLog {
 			cel,
 			access_log_preset: None,
 			database_llm: Default::default(),
+			database_payload: Default::default(),
 			input_messages: Default::default(),
 			metrics,
 			model_catalog,
@@ -1179,6 +1184,54 @@ impl RequestLog {
 			response_snapshot: None,
 			source_context: None,
 			response_bytes: 0,
+		}
+	}
+
+	/// Decides the database `payloadFilter` from the request alone, before the LLM request is
+	/// processed. Only a request-phase expression that evaluates to a boolean decides here; anything
+	/// else is left for log time. With `llm: full`, content is captured only if the filter may pass.
+	pub fn decide_database_payload(&mut self, req: &crate::http::Request) {
+		if self.database_payload.is_some() {
+			return;
+		}
+		let Some(filter) = self.cel.database_payload_filter.as_deref() else {
+			return;
+		};
+		if filter.request_phase_only()
+			&& let Ok(cel::Value::Bool(passes)) = cel::Executor::new_request(req).eval(filter)
+		{
+			self.database_payload = Some(passes);
+		}
+		if self.database_payload != Some(false)
+			&& self.database_llm == Some(crate::types::frontend::DatabaseLlmMode::Full)
+		{
+			self.cel.ctx().register_log_llm_payload();
+		}
+	}
+
+	/// Whether normalized LLM content is captured for the database payload table.
+	pub fn captures_database_llm_payload(&self) -> bool {
+		self.database_llm == Some(crate::types::frontend::DatabaseLlmMode::Full)
+			&& self.database_payload != Some(false)
+	}
+
+	/// The LLM mode handed to the database writer. A request that fails `payloadFilter` keeps its
+	/// row, usage and cost, but no prompt or completion content is stored for it.
+	fn database_llm_for_storage(
+		&self,
+		cel_exec: &CelLoggingExecutor<'_>,
+	) -> Option<crate::types::frontend::DatabaseLlmMode> {
+		let passes = self.database_payload.unwrap_or_else(|| {
+			self
+				.cel
+				.database_payload_filter
+				.as_deref()
+				.is_none_or(|filter| cel_exec.executor.eval_bool(filter))
+		});
+		if passes {
+			self.database_llm
+		} else {
+			Some(crate::types::frontend::DatabaseLlmMode::Metadata)
 		}
 	}
 
@@ -1279,6 +1332,9 @@ pub struct RequestLog {
 	/// dedicated payload table. `None` preserves the legacy behavior of persisting content captured
 	/// by CEL expressions. This is independent from CEL attribute capture.
 	pub database_llm: Option<crate::types::frontend::DatabaseLlmMode>,
+	/// Result of the database `payloadFilter` once it is decided from the request alone. `None`
+	/// defers the decision to log time.
+	pub database_payload: Option<bool>,
 	/// Provider-neutral input messages retained for full database payload logging.
 	pub input_messages: Option<Arc<Vec<agent_llm::types::NormalizedMessage>>>,
 	pub metrics: Arc<Metrics>,
@@ -2143,6 +2199,7 @@ impl Drop for DropOnLog {
 
 					let mut db_kv = kv.clone();
 					let db_raws = cel_exec.eval_database_additions();
+					let llm_mode = log.database_llm_for_storage(&cel_exec);
 					let default_db_raws = [
 						(
 							Cow::Borrowed("user_agent.name"),
@@ -2224,7 +2281,7 @@ impl Drop for DropOnLog {
 					};
 					log_store::emit(log_store::PendingRequestLog {
 						record,
-						llm_mode: log.database_llm,
+						llm_mode,
 						input_messages: log.input_messages.take(),
 						llm_response,
 					});
@@ -2863,6 +2920,7 @@ mod tests {
 			otlp_fields: LoggingFields::default(),
 			metric_fields: MetricFields::default(),
 			database_fields: LoggingFields::default(),
+			database_payload_filter: None,
 		};
 		let mut registry = Registry::default();
 		let metrics = Arc::new(Metrics::new(
@@ -3437,6 +3495,150 @@ mod tests {
 				]
 			}]))
 		);
+	}
+
+	fn database_payload_policy(database: serde_json::Value) -> LoggingPolicy {
+		serde_json::from_value(serde_json::json!({ "database": database })).unwrap()
+	}
+
+	fn request_with_api_key(capture: Option<bool>) -> crate::http::Request {
+		let mut req = ::http::Request::builder()
+			.uri("http://example.com/v1/chat/completions")
+			.body(crate::http::Body::empty())
+			.unwrap();
+		if let Some(capture) = capture {
+			req.extensions_mut().insert(crate::http::apikey::Claims {
+				key: crate::http::apikey::APIKey::new("test-key"),
+				metadata: serde_json::json!({ "capture": capture }),
+			});
+		}
+		req
+	}
+
+	/// The LLM mode the database writer receives, with any undecided filter evaluated against the
+	/// request and response the way the access log evaluates it.
+	fn stored_llm_mode(
+		log: &RequestLog,
+		req: &mut crate::http::Request,
+		resp: Option<&mut crate::http::Response>,
+	) -> Option<DatabaseLlmMode> {
+		let req_snapshot = log.cel.cel_context.maybe_snapshot_request(req, false);
+		let resp_snapshot = resp.and_then(|resp| log.cel.cel_context.maybe_snapshot_response(resp));
+		let end_time = cel::RequestTime(Timestamp::now().as_datetime());
+		let cel_exec = log.cel.build(CelLoggingBuildInputs {
+			req: req_snapshot.as_ref(),
+			resp: resp_snapshot.as_ref(),
+			llm_response: None,
+			mcp: None,
+			guardrails: None,
+			mcp_guardrails: None,
+			end_time: &end_time,
+			proxy: None,
+			source_context: None,
+		});
+		log.database_llm_for_storage(&cel_exec)
+	}
+
+	#[test]
+	fn database_payload_filter_skips_capture_for_requests_that_fail_it() {
+		let policy = database_payload_policy(serde_json::json!({
+			"llm": "full",
+			"payloadFilter": "default(apiKey.capture, false) == true"
+		}));
+		for capture in [Some(false), None] {
+			let mut log = test_request_log();
+			crate::proxy::httpproxy::apply_logging_policy_to_log(&mut log, &policy);
+			// Content capture waits until the request is known.
+			assert!(!log.cel.cel_context.needs_llm_completion());
+
+			let mut req = request_with_api_key(capture);
+			log.decide_database_payload(&req);
+
+			assert_eq!(log.database_payload, Some(false), "capture={capture:?}");
+			assert!(!log.captures_database_llm_payload());
+			assert!(!log.cel.cel_context.needs_llm_completion());
+			assert!(!log.cel.cel_context.needs_llm_tool_calls());
+			let mode = stored_llm_mode(&log, &mut req, None);
+			assert_eq!(mode, Some(DatabaseLlmMode::Metadata));
+			assert!(database_llm_payload(mode, None, Some(&llm_context_with_content())).is_none());
+		}
+	}
+
+	#[test]
+	fn database_payload_filter_captures_requests_that_pass_it() {
+		let policy = database_payload_policy(serde_json::json!({
+			"llm": "full",
+			"payloadFilter": "default(apiKey.capture, false) == true"
+		}));
+		let mut log = test_request_log();
+		crate::proxy::httpproxy::apply_logging_policy_to_log(&mut log, &policy);
+
+		let mut req = request_with_api_key(Some(true));
+		log.decide_database_payload(&req);
+
+		assert_eq!(log.database_payload, Some(true));
+		assert!(log.captures_database_llm_payload());
+		assert!(log.cel.cel_context.needs_llm_completion());
+		assert!(log.cel.cel_context.needs_llm_tool_calls());
+		let mode = stored_llm_mode(&log, &mut req, None);
+		assert_eq!(mode, Some(DatabaseLlmMode::Full));
+		assert!(database_llm_payload(mode, None, Some(&llm_context_with_content())).is_some());
+	}
+
+	#[test]
+	fn database_payload_filter_on_response_is_decided_at_log_time() {
+		let policy = database_payload_policy(serde_json::json!({
+			"llm": "full",
+			"payloadFilter": "response.code == 200"
+		}));
+		let mut log = test_request_log();
+		crate::proxy::httpproxy::apply_logging_policy_to_log(&mut log, &policy);
+
+		let mut req = request_with_api_key(None);
+		log.decide_database_payload(&req);
+
+		// The response is not known yet, so content is captured and the filter runs at log time.
+		assert_eq!(log.database_payload, None);
+		assert!(log.captures_database_llm_payload());
+		assert!(log.cel.cel_context.needs_llm_completion());
+		for (status, expected) in [
+			(200u16, DatabaseLlmMode::Full),
+			(500, DatabaseLlmMode::Metadata),
+		] {
+			let mut resp = ::http::Response::builder()
+				.status(status)
+				.body(crate::http::Body::empty())
+				.unwrap();
+			assert_eq!(
+				stored_llm_mode(&log, &mut req, Some(&mut resp)),
+				Some(expected),
+				"status={status}"
+			);
+		}
+	}
+
+	#[test]
+	fn database_payload_filter_withholds_legacy_payload() {
+		let policy = database_payload_policy(serde_json::json!({
+			"payloadFilter": "request.headers[\"x-capture\"] == \"true\""
+		}));
+		for (header, expected) in [("true", None), ("false", Some(DatabaseLlmMode::Metadata))] {
+			let mut log = test_request_log();
+			crate::proxy::httpproxy::apply_logging_policy_to_log(&mut log, &policy);
+			let mut req = ::http::Request::builder()
+				.header("x-capture", header)
+				.body(crate::http::Body::empty())
+				.unwrap();
+			// Requests that never reach an LLM backend are decided at log time instead.
+			assert_eq!(stored_llm_mode(&log, &mut req, None), expected);
+			log.decide_database_payload(&req);
+			let mode = stored_llm_mode(&log, &mut req, None);
+			assert_eq!(mode, expected, "x-capture={header}");
+			assert_eq!(
+				database_llm_payload(mode, None, Some(&llm_context_with_content())).is_some(),
+				header == "true"
+			);
+		}
 	}
 
 	#[test]

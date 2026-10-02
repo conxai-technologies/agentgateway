@@ -298,6 +298,21 @@ impl Expression {
 		self.attributes.contains(Attributes::Llm)
 	}
 
+	/// Whether the expression reads only attributes that are settled once request policies have
+	/// run: the connection, the request head, the backend and authentication claims. Such an
+	/// expression gives the same result before any body is read as it does at log time.
+	pub fn request_phase_only(&self) -> bool {
+		let settled = Attributes::Source
+			| Attributes::Destination
+			| Attributes::Request
+			| Attributes::Backend
+			| Attributes::Jwt
+			| Attributes::ApiKey
+			| Attributes::BasicAuth
+			| Attributes::Extauthz;
+		settled.contains(self.attributes)
+	}
+
 	/// new_permissive compiles the expression. If the expression cannot be compiled, its instead replaced
 	/// with an expression that always fails to evaluate. The returned error is the compilation error
 	/// from the original expression, if one was suppressed.
