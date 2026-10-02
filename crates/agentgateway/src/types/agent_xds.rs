@@ -2082,6 +2082,7 @@ pub(crate) fn backend_with_policies_from_proto(
 						path_override: provider_config.path_override.as_ref().map(strng::new),
 						path_prefix: connection.path_prefix,
 						inline_policies: pols,
+						capacity: None,
 					};
 					local_provider_group.push((provider_name, np));
 				}

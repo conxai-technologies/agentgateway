@@ -195,6 +195,7 @@ async fn llm_detect_mode_passthrough_without_rewrite() {
 			}
 		}))
 		.unwrap(),
+		capacity: None,
 	};
 	let (mock, _bind, io) = setup_llm_named_provider_mock(mock, provider, "{}");
 	let body = llm_body!("requests/completions/basic.json");
@@ -259,6 +260,7 @@ async fn llm_detect_mode_respects_model_rewrite() {
 			}
 		}))
 		.unwrap(),
+		capacity: None,
 	};
 	let (mock, _bind, io) = setup_llm_named_provider_mock(mock, provider, "{}");
 	let body = llm_body!("requests/completions/basic.json");
@@ -1111,6 +1113,7 @@ async fn llm_custom_rerank() {
 			"ai": {"routes": {"/v1/rerank": "rerank"}}
 		}))
 		.unwrap(),
+		capacity: None,
 	};
 	let (mock, _bind, io) = setup_llm_named_provider_mock(mock, provider, "{}");
 

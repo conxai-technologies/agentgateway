@@ -1175,6 +1175,8 @@ impl RequestLog {
 			ate_router_route_duration: None,
 			ate_router_outcome: None,
 			request_handle: None,
+			capacity_permit: None,
+			capacity_shed: false,
 			request_snapshot: None,
 			response_snapshot: None,
 			source_context: None,
@@ -1264,6 +1266,9 @@ impl RequestLog {
 			source_context: self.source_context.as_ref(),
 			proxy: Some(&proxy_timing),
 		});
+		if let Some(permit) = self.capacity_permit.take() {
+			permit.settle(llm_response);
+		}
 		let Some(rh) = self.request_handle.take() else {
 			return;
 		};
@@ -1359,6 +1364,10 @@ pub struct RequestLog {
 	pub ate_router_outcome: Option<RouteOutcome>,
 
 	pub request_handle: Option<ActiveHandle>,
+	/// Capacity accounting for the selected LLM provider; settled with the response's token usage.
+	pub capacity_permit: Option<crate::llm::capacity::CapacityPermit>,
+	/// Set when a low-priority request was refused because provider capacity is reserved.
+	pub capacity_shed: bool,
 	pub request_snapshot: Option<Arc<cel::RequestSnapshot>>,
 	pub response_snapshot: Option<cel::ResponseSnapshot>,
 	/// Source context for TCP connections (where we don't have an HTTP request)
@@ -1464,6 +1473,9 @@ impl Drop for DropOnLog {
 			if let (Some(budgets), Some(llm_response)) = (log.budgets.take(), llm_response.as_ref()) {
 				budgets.settle(llm_response);
 			}
+			if let Some(permit) = log.capacity_permit.take() {
+				permit.settle(llm_response.as_ref());
+			}
 
 			let mcp = log.mcp_status.take();
 			let guardrails = log.guardrails.take().filter(|g| !g.is_empty());
@@ -1548,6 +1560,13 @@ impl Drop for DropOnLog {
 					.retries
 					.get_or_create(&http_labels)
 					.inc_by(retry_count as u64);
+			}
+			if log.capacity_shed {
+				log
+					.metrics
+					.gen_ai_provider_capacity_shed
+					.get_or_create(&http_labels)
+					.inc();
 			}
 			if !is_tcp {
 				let labels = http_labels.into();

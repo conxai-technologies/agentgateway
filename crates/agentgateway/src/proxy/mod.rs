@@ -105,7 +105,8 @@ impl ProxyError {
 			ProxyError::RateLimitFailed
 			| ProxyError::RateLimitExceeded { .. }
 			| ProxyError::RemoteRateLimitExceeded { .. }
-			| ProxyError::BudgetExceeded(_) => ProxyResponseReason::RateLimit,
+			| ProxyError::BudgetExceeded(_)
+			| ProxyError::ProviderCapacityExhausted(_) => ProxyResponseReason::RateLimit,
 			ProxyError::GuardrailRejected { .. } => ProxyResponseReason::Guardrail,
 			ProxyError::RequestLimitExceeded => ProxyResponseReason::Overload,
 		}
@@ -267,6 +268,8 @@ pub enum ProxyError {
 	},
 	#[error(transparent)]
 	BudgetExceeded(#[from] http::budget::BudgetExceeded),
+	#[error(transparent)]
+	ProviderCapacityExhausted(#[from] llm::capacity::CapacityExhausted),
 	#[error("rate limit failed")]
 	RateLimitFailed,
 	#[error("request limit exceeded")]
@@ -468,6 +471,7 @@ impl ProxyError {
 					.expect("static response must build");
 			},
 			ProxyError::BudgetExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+			ProxyError::ProviderCapacityExhausted(_) => StatusCode::TOO_MANY_REQUESTS,
 			// Rate limit service communication failure is a server error (500), not a rate limit (429).
 			// This matches Envoy's behavior (status_on_error defaults to 500).
 			ProxyError::RateLimitFailed => StatusCode::INTERNAL_SERVER_ERROR,
@@ -579,6 +583,25 @@ impl ProxyError {
 					.to_string(),
 				))
 				.expect("budget exceeded response is valid");
+		}
+		if let ProxyError::ProviderCapacityExhausted(exhausted) = &self {
+			return rb
+				.header(hyper::header::CONTENT_TYPE, "application/json")
+				.header(
+					hyper::header::RETRY_AFTER,
+					exhausted.retry_after.to_string(),
+				)
+				.body(http::Body::from(
+					serde_json::json!({
+						"error": {
+							"message": exhausted.to_string(),
+							"type": "rate_limit_error",
+							"code": "provider_capacity_reserved",
+						}
+					})
+					.to_string(),
+				))
+				.expect("provider capacity response is valid");
 		}
 
 		// Add WWW-Authenticate header for MCP failures

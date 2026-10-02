@@ -37,6 +37,7 @@ pub use agent_llm::{azure, bedrock, vertex};
 /// Default body buffer limit once a request enters LLM processing.
 pub const DEFAULT_BUFFER_LIMIT: usize = 32 * 1024 * 1024;
 
+pub mod capacity;
 pub mod catalog;
 pub mod discovery;
 pub mod policy;
@@ -73,6 +74,17 @@ pub struct AIBackend {
 	#[serde(skip_serializing)]
 	pub default_health: Option<http::health::Policy>,
 	pub providers: crate::types::loadbalancer::EndpointSet<NamedAIProvider>,
+	/// Set when a provider declares a capacity or the backend sheds low-priority requests.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub capacity: Option<Arc<capacity::CapacityPolicy>>,
+}
+
+/// A provider chosen for one attempt, with the handles that account for it.
+#[derive(Debug)]
+pub struct SelectedProvider {
+	pub provider: Arc<NamedAIProvider>,
+	pub handle: ActiveHandle,
+	pub permit: Option<capacity::CapacityPermit>,
 }
 
 impl AIBackend {
@@ -82,10 +94,74 @@ impl AIBackend {
 			eviction: Some(http::health::Eviction::default()),
 			..Default::default()
 		});
+		let capacity = providers
+			.any(|p| p.capacity.is_some())
+			.then(|| Arc::new(capacity::CapacityPolicy::default()));
 		Self {
 			default_health,
 			providers,
+			capacity,
 		}
+	}
+
+	/// Attaches priority shedding settings. A policy that sheds nothing is only kept when a
+	/// provider declares a capacity.
+	pub fn with_capacity_policy(mut self, policy: capacity::CapacityPolicy) -> Self {
+		if policy.priority.is_some() || self.capacity.is_some() {
+			self.capacity = Some(Arc::new(policy));
+		}
+		self
+	}
+
+	/// Selects a provider for one attempt. Without capacity settings this is `select_provider`.
+	/// With them, providers with more headroom are preferred and providers without headroom are
+	/// skipped (see `capacity::CapacityPolicy::select`); a low-priority request is refused when
+	/// every reachable provider is below its group's reserve.
+	pub fn select_provider_for(
+		&self,
+		affinity_key: Option<u64>,
+		req: &crate::http::Request,
+	) -> Result<Option<SelectedProvider>, capacity::CapacityExhausted> {
+		let Some(policy) = &self.capacity else {
+			return Ok(
+				self
+					.select_provider(affinity_key)
+					.map(|(provider, handle)| SelectedProvider {
+						provider,
+						handle,
+						permit: None,
+					}),
+			);
+		};
+		let priority = policy.priority(req);
+		let selected = policy.select(&self.providers, affinity_key, priority, Instant::now())?;
+		let (provider, handle) = match selected {
+			Some((provider, info)) => {
+				let handle = self.providers.start_request(provider.name.clone(), &info);
+				(provider, handle)
+			},
+			// No provider has headroom by our estimate; let the providers' own limits decide.
+			None => match self.select_provider(affinity_key) {
+				Some(selected) => selected,
+				None => return Ok(None),
+			},
+		};
+		let permit = provider.capacity.as_ref().map(|c| c.admit());
+		Ok(Some(SelectedProvider {
+			provider,
+			handle,
+			permit,
+		}))
+	}
+
+	/// Publishes the headroom of every provider with a declared capacity.
+	pub fn export_capacity(&self, metrics: &crate::telemetry::metrics::Metrics) {
+		self.providers.any(|p| {
+			if let Some(c) = &p.capacity {
+				c.export(metrics);
+			}
+			false
+		});
 	}
 
 	pub fn select_provider(
@@ -137,6 +213,9 @@ pub struct NamedAIProvider {
 	pub tokenize: bool,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub inline_policies: Vec<BackendTrafficPolicy>,
+	/// Provider-enforced limits and the usage tracked against them.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub capacity: Option<Arc<capacity::CapacityTracker>>,
 }
 
 #[apply(schema!)]
