@@ -590,16 +590,9 @@ mod lookups {
 		// Bedrock invoke
 		&["metadata", "usage", "cacheWriteInputTokensCount"],
 	];
-	pub const CACHE_CREATION_1H_INPUT_TOKENS: [&[&str]; 2] = [
+	pub const CACHE_CREATION_1H_INPUT_TOKENS: [&[&str]; 1] = [
 		// Messages
 		&["usage", "cache_creation", "ephemeral_1h_input_tokens"],
-		// Messages streaming (message_start)
-		&[
-			"message",
-			"usage",
-			"cache_creation",
-			"ephemeral_1h_input_tokens",
-		],
 	];
 	pub const CACHED_INPUT_TOKENS: [&[&str]; 6] = [
 		// Message
