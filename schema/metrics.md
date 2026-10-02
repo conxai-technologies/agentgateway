@@ -51,6 +51,8 @@
 | `agentgateway_cost_catalog_lookups_total` | Counter | — | Total number of model cost catalog lookups by resolution status. |
 | `agentgateway_gen_ai_client_cost_usd_total` | Counter | usd | Cumulative USD cost of generative AI requests. |
 | `agentgateway_gen_ai_client_token_usage` | Histogram | — | Number of tokens used per request. |
+| `agentgateway_gen_ai_provider_capacity_headroom` | Gauge | — | Remaining capacity of an LLM provider with a declared capacity, as a fraction of its limit (minimum over requests, input and output tokens per minute), as estimated by this replica. |
+| `agentgateway_gen_ai_provider_capacity_shed_total` | Counter | — | The total number of low-priority LLM requests refused because provider capacity was reserved for high-priority requests. |
 | `agentgateway_gen_ai_server_inter_chunk_latency` | Histogram | — | Time between consecutive output chunks for a given request. |
 | `agentgateway_gen_ai_server_request_duration` | Histogram | — | Duration of a generative AI request in seconds; failed operations have error_type="_OTHER" and successful operations omit the label. |
 | `agentgateway_gen_ai_server_time_per_output_token` | Histogram | — | Time to generate each output token for a given request. |

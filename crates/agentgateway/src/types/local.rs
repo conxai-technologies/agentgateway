@@ -563,6 +563,15 @@ pub struct LocalLLMWeightedTarget {
 pub struct LocalLLMFailoverRouting {
 	/// targets are grouped by priority. Lower priority values are tried first.
 	targets: Vec<LocalLLMFailoverTarget>,
+	/// priority is a CEL expression evaluated against the request to classify its priority: a result
+	/// of `"low"` makes it low priority, anything else (including errors) high priority.
+	/// For example `apiKey.class == "batch" ? "low" : "high"`.
+	priority: Option<Arc<cel::Expression>>,
+	/// reserveForHighPriority is the fraction of capacity headroom (0 to 1, exclusive) that
+	/// low-priority requests leave to high-priority ones, at every priority level. Low-priority
+	/// requests are refused with a 429 when no target has more headroom than this.
+	/// Requires `priority`.
+	reserve_for_high_priority: Option<f64>,
 }
 
 #[apply(schema_de!)]
@@ -865,6 +874,10 @@ pub struct LocalLLMModels {
 	/// matches specifies the conditions under which this model should be used in addition to matching the model name.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	matches: Vec<LLMRouteMatch>,
+	/// capacity declares the limits the upstream enforces for this model, per minute. Virtual model
+	/// failover prefers targets with more remaining headroom and skips targets without headroom
+	/// while another target at the same priority has some. Usage is tracked per replica.
+	capacity: Option<llm::capacity::ProviderCapacity>,
 }
 
 #[apply(schema_de!)]
@@ -1542,7 +1555,22 @@ pub enum LocalBackend {
 #[allow(clippy::large_enum_variant)] // Size is not sensitive for local config
 pub enum LocalAIBackend {
 	Provider(LocalNamedAIProvider),
-	Groups { groups: Vec<LocalAIProviders> },
+	Groups {
+		groups: Vec<LocalAIProviders>,
+		/// CEL expression evaluated against the request to classify its priority: a result of
+		/// `"low"` makes it low priority, anything else (including errors) high priority. Low-priority
+		/// requests only use providers whose capacity headroom is above their group's
+		/// `reserveForHighPriority`, and are refused with a 429 when none is.
+		/// For example `apiKey.class == "batch" ? "low" : "high"`.
+		priority: Option<Arc<crate::cel::Expression>>,
+	},
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalAIGroups {
+	groups: Vec<LocalAIProviders>,
+	priority: Option<Arc<crate::cel::Expression>>,
 }
 
 // Custom impl to avoid terrible 'not match any variant of untagged' errors.
@@ -1556,12 +1584,11 @@ impl<'de> Deserialize<'de> for LocalAIBackend {
 				let v: serde_json::Value = map.deserialize()?;
 
 				if let serde_json::Value::Object(m) = &v
-					&& m.len() == 1
-					&& let Some(g) = m.get("groups")
+					&& m.contains_key("groups")
 				{
-					Ok(LocalAIBackend::Groups {
-						groups: Vec::<LocalAIProviders>::deserialize(g).map_err(serde::de::Error::custom)?,
-					})
+					let LocalAIGroups { groups, priority } =
+						LocalAIGroups::deserialize(&v).map_err(serde::de::Error::custom)?;
+					Ok(LocalAIBackend::Groups { groups, priority })
 				} else {
 					Ok(LocalAIBackend::Provider(
 						LocalNamedAIProvider::deserialize(&v).map_err(serde::de::Error::custom)?,
@@ -1576,6 +1603,10 @@ impl<'de> Deserialize<'de> for LocalAIBackend {
 pub struct LocalAIProviders {
 	/// LLM providers in this group, load balanced together.
 	providers: Vec<LocalNamedAIProvider>,
+	/// Fraction of capacity headroom (0 to 1, exclusive) that low-priority requests leave to
+	/// high-priority ones: a low-priority request only uses a provider in this group whose
+	/// headroom is above this value. Requires `priority` on the backend.
+	reserve_for_high_priority: Option<f64>,
 }
 
 #[apply(schema_de!)]
@@ -1598,19 +1629,33 @@ pub struct LocalNamedAIProvider {
 	/// Backend policies applied to traffic to this provider.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub policies: Option<LocalBackendPolicies>,
+	/// Limits the upstream enforces for this provider, per minute. Providers with more remaining
+	/// headroom are preferred, and providers without headroom are skipped while another provider
+	/// in the same group has some. Usage is tracked per replica.
+	pub capacity: Option<llm::capacity::ProviderCapacity>,
 }
 
 impl LocalAIBackend {
 	pub async fn translate(
 		self,
+		backend_name: &str,
 		resources: &crate::resource_manager::ResourceFetcher,
 	) -> anyhow::Result<AIBackend> {
-		let providers = match self {
-			LocalAIBackend::Provider(p) => {
-				vec![vec![p]]
+		let (providers, reserves, priority) = match self {
+			LocalAIBackend::Provider(p) => (vec![vec![p]], vec![None], None),
+			LocalAIBackend::Groups { groups, priority } => {
+				let reserves = groups
+					.iter()
+					.map(|g| g.reserve_for_high_priority)
+					.collect_vec();
+				(
+					groups.into_iter().map(|g| g.providers).collect_vec(),
+					reserves,
+					priority,
+				)
 			},
-			LocalAIBackend::Groups { groups } => groups.into_iter().map(|g| g.providers).collect_vec(),
 		};
+		let capacity_policy = llm::capacity::CapacityPolicy::new(priority, reserves)?;
 		let mut ep_groups = vec![];
 		for g in providers {
 			let mut group = vec![];
@@ -1632,6 +1677,11 @@ impl LocalAIBackend {
 					Some(p) => p.translate(resources).await?,
 					None => Vec::new(),
 				};
+				let capacity = p
+					.capacity
+					.map(|c| llm::capacity::CapacityTracker::new(c, backend_name, &p.name))
+					.transpose()?
+					.map(Arc::new);
 				group.push((
 					p.name.clone(),
 					NamedAIProvider {
@@ -1643,13 +1693,14 @@ impl LocalAIBackend {
 						path_prefix: p.path_prefix,
 						tokenize: p.tokenize,
 						inline_policies: policies,
+						capacity,
 					},
 				));
 			}
 			ep_groups.push(group);
 		}
 		let es = types::loadbalancer::EndpointSet::new(ep_groups);
-		Ok(AIBackend::new(es))
+		Ok(AIBackend::new(es).with_capacity_policy(capacity_policy))
 	}
 }
 
@@ -1838,7 +1889,7 @@ impl LocalBackend {
 				backends
 			},
 			LocalBackend::AI(tgt) => {
-				let be = tgt.clone().translate(resources).await?;
+				let be = tgt.clone().translate(&name.name, resources).await?;
 				vec![Backend::AI(name, be).into()]
 			},
 			LocalBackend::Aws(aws_backend) => {
@@ -4718,6 +4769,12 @@ async fn convert_llm_config(
 		};
 
 		// Create AI backend
+		let capacity = model_config
+			.capacity
+			.clone()
+			.map(|c| llm::capacity::CapacityTracker::new(c, &backend_key, &model_config.name))
+			.transpose()?
+			.map(Arc::new);
 		let named_provider = NamedAIProvider {
 			name: model_name.clone(),
 			provider,
@@ -4727,6 +4784,7 @@ async fn convert_llm_config(
 			path_prefix: p.path_prefix,
 			tokenize: p.tokenize,
 			inline_policies: pols,
+			capacity,
 		};
 		let resolved_provider = named_provider.clone();
 
@@ -4883,13 +4941,18 @@ async fn convert_llm_config(
 							.collect::<anyhow::Result<Vec<_>>>()
 					})
 					.collect::<anyhow::Result<Vec<_>>>()?;
+				let capacity_policy = llm::capacity::CapacityPolicy::new(
+					failover.priority.clone(),
+					vec![failover.reserve_for_high_priority; provider_groups.len()],
+				)?;
 				let backend_key = strng::format!("llm:virtual-model:{}:{idx}", virtual_model.name);
 				all_backends.push(BackendWithPolicies {
 					backend: Backend::AI(
 						local_name(backend_key.clone()),
 						AIBackend::new(crate::types::loadbalancer::EndpointSet::new(
 							provider_groups,
-						)),
+						))
+						.with_capacity_policy(capacity_policy),
 					),
 					inline_policies: vec![],
 				});

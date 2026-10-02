@@ -167,6 +167,13 @@ pub struct CostCatalogLookupLabels {
 	pub common: EncodeArc<GenAILabels>,
 }
 
+/// Identifies an LLM provider entry with a declared capacity.
+#[derive(Clone, Hash, Debug, PartialEq, Eq, EncodeLabelSet)]
+pub struct ProviderCapacityLabels {
+	pub backend: DefaultedUnknown<RichStrng>,
+	pub provider: DefaultedUnknown<RichStrng>,
+}
+
 #[derive(Clone, Hash, Debug, PartialEq, Eq, EncodeLabelSet)]
 pub struct MCPCall {
 	pub method: DefaultedUnknown<RichStrng>,
@@ -316,6 +323,9 @@ pub struct Metrics {
 	pub gen_ai_time_per_output_token: Histogram<GenAILabels>,
 	pub gen_ai_time_to_first_token: Histogram<GenAILabels>,
 	pub gen_ai_inter_chunk_latency: Histogram<GenAILabels>,
+	pub gen_ai_provider_capacity_headroom:
+		Family<ProviderCapacityLabels, Gauge<f64, std::sync::atomic::AtomicU64>>,
+	pub gen_ai_provider_capacity_shed: Counter,
 
 	pub tls_handshake_duration: Histogram<TCPLabels>,
 
@@ -584,6 +594,20 @@ impl Metrics {
 			gen_ai_time_per_output_token,
 			gen_ai_time_to_first_token,
 			gen_ai_inter_chunk_latency,
+			gen_ai_provider_capacity_headroom: {
+				let m = Family::default();
+				registry.register(
+					"gen_ai_provider_capacity_headroom",
+					"Remaining capacity of an LLM provider with a declared capacity, as a fraction of its limit (minimum over requests, input and output tokens per minute), as estimated by this replica",
+					m.clone(),
+				);
+				m
+			},
+			gen_ai_provider_capacity_shed: build(
+				&mut registry,
+				"gen_ai_provider_capacity_shed",
+				"The total number of low-priority LLM requests refused because provider capacity was reserved for high-priority requests",
+			),
 
 			response_bytes: {
 				let m = Family::<HTTPLabels, _>::default();

@@ -790,6 +790,47 @@ impl<T: Clone + Sync + Send + 'static> EndpointSet<T> {
 		Some((endpoint.endpoint.clone(), endpoint.info.clone()))
 	}
 
+	/// Selects from the first priority bucket that has an active endpoint for which `weight`
+	/// (called with the bucket index) returns `Some`. Endpoints returning `None` are skipped. Within
+	/// the bucket, an affinity key picks the rendezvous winner among the eligible endpoints;
+	/// otherwise P2C compares `score() * weight`. Returns `None` when no active endpoint in any
+	/// bucket is eligible; rejected endpoints are not considered.
+	pub(crate) fn select_eligible(
+		&self,
+		affinity_key: Option<u64>,
+		mut weight: impl FnMut(usize, &T) -> Option<f64>,
+	) -> Option<(Arc<T>, Arc<EndpointInfo>)> {
+		for (idx, bucket) in self.buckets.iter().enumerate() {
+			let group = bucket.load_full();
+			let eligible = group
+				.active
+				.values()
+				.filter_map(|ewi| weight(idx, ewi.endpoint.as_ref()).map(|w| (ewi, w)))
+				.collect_vec();
+			if eligible.is_empty() {
+				continue;
+			}
+			let (ewi, _) = match affinity_key {
+				Some(key) => eligible
+					.iter()
+					.max_by_key(|(ewi, _)| rendezvous_hash(key, ewi.endpoint_hash))
+					.expect("eligible is not empty"),
+				None => {
+					let mut rng = rand::rng();
+					let a = &eligible[rng.random_range(0..eligible.len())];
+					let b = &eligible[rng.random_range(0..eligible.len())];
+					if b.0.info.score() * b.1 > a.0.info.score() * a.1 {
+						b
+					} else {
+						a
+					}
+				},
+			};
+			return Some((ewi.endpoint.clone(), ewi.info.clone()));
+		}
+		None
+	}
+
 	/// Visit every endpoint, returning the first `Some` produced by `f`. Active
 	/// endpoints from all buckets are visited before any rejected endpoint, e.g.:
 	///   active in bucket 0

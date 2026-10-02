@@ -2500,10 +2500,25 @@ async fn make_backend_call(
 				.session_affinity
 				.as_ref()
 				.and_then(|policy| policy.affinity_key(&req));
-			let (provider, handle) = ai
-				.select_provider(affinity_key)
-				.ok_or(ProxyError::NoHealthyEndpoints)?;
-			log.add(move |l| l.request_handle = Some(handle));
+			let selected = match ai.select_provider_for(affinity_key, &req) {
+				Ok(selected) => selected,
+				Err(exhausted) => {
+					log.add(|l| l.capacity_shed = true);
+					return Err(ProxyError::from(exhausted).into());
+				},
+			};
+			let llm::SelectedProvider {
+				provider,
+				handle,
+				permit,
+			} = selected.ok_or(ProxyError::NoHealthyEndpoints)?;
+			if ai.capacity.is_some() {
+				ai.export_capacity(&inputs.metrics);
+			}
+			log.add(move |l| {
+				l.request_handle = Some(handle);
+				l.capacity_permit = permit;
+			});
 			let sub_backend_name = BackendTargetRef::Backend {
 				name: n.name.as_ref(),
 				namespace: n.namespace.as_ref(),
@@ -3760,6 +3775,9 @@ pub(crate) fn set_final_response_fields(
 	log.status = Some(resp.status());
 	log.reason = Some(*reason);
 	log.retry_after = http::outlierdetection::retry_after(resp.status(), resp.headers());
+	if let Some(permit) = log.capacity_permit.as_mut() {
+		permit.observe_headers(resp.headers());
+	}
 	log.response_snapshot = log.cel.cel_context.maybe_snapshot_response(resp);
 }
 
@@ -3768,11 +3786,16 @@ fn finalize_attempt_for_retry(
 	res: &mut Result<Response, SnapshottedProxyResponse>,
 ) {
 	let (status, retry_after, response_snapshot) = match res {
-		Ok(resp) => (
-			Some(resp.status()),
-			http::outlierdetection::retry_after(resp.status(), resp.headers()),
-			log.cel.cel_context.maybe_snapshot_response(resp),
-		),
+		Ok(resp) => {
+			if let Some(permit) = log.capacity_permit.as_mut() {
+				permit.observe_headers(resp.headers());
+			}
+			(
+				Some(resp.status()),
+				http::outlierdetection::retry_after(resp.status(), resp.headers()),
+				log.cel.cel_context.maybe_snapshot_response(resp),
+			)
+		},
 		Err(SnapshottedProxyResponse(_)) => (None, None, None),
 	};
 	let end_time = agent_core::Timestamp::now();
@@ -4400,9 +4423,10 @@ mod tests {
 		}))
 		.expect("local AI backend");
 		let ai = local_backend
-			.translate(&crate::resource_manager::ResourceFetcher::direct(
-				bind.pi.upstream.clone(),
-			))
+			.translate(
+				"failover",
+				&crate::resource_manager::ResourceFetcher::direct(bind.pi.upstream.clone()),
+			)
 			.await
 			.expect("translated backend");
 		let providers = ai.providers.clone();

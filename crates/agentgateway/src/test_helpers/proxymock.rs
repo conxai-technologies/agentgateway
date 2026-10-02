@@ -173,7 +173,7 @@ pub fn setup_llm_named_provider_mock_with_config(
 	let t = setup_proxy_test_with_config(config);
 	let resources = crate::resource_manager::ResourceFetcher::direct(t.pi.upstream.clone());
 	let be = futures::executor::block_on(
-		crate::types::local::LocalAIBackend::Provider(provider).translate(&resources),
+		crate::types::local::LocalAIBackend::Provider(provider).translate("default", &resources),
 	)
 	.unwrap();
 	let b = Backend::AI(
@@ -201,6 +201,7 @@ pub fn llm_named_provider(
 		path_prefix: None,
 		tokenize,
 		policies: None,
+		capacity: None,
 	}
 }
 
@@ -237,6 +238,7 @@ pub fn custom_llm_backend_with_formats(
 		path_prefix: None,
 		tokenize: false,
 		inline_policies: vec![],
+		capacity: None,
 	};
 	let providers = EndpointSet::new(vec![vec![(provider.name.clone(), provider)]]);
 	Backend::AI(

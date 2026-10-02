@@ -9041,6 +9041,17 @@
               "items": {
                 "$ref": "#/$defs/LocalAIProviders"
               }
+            },
+            "priority": {
+              "description": "CEL expression evaluated against the request to classify its priority: a result of\n`\"low\"` makes it low priority, anything else (including errors) high priority. Low-priority\nrequests only use providers whose capacity headroom is above their group's\n`reserveForHighPriority`, and are refused with a 429 when none is.\nFor example `apiKey.class == \"batch\" ? \"low\" : \"high\"`.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Expression"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false,
@@ -9092,6 +9103,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LocalBackendPolicies"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capacity": {
+          "description": "Limits the upstream enforces for this provider, per minute. Providers with more remaining\nheadroom are preferred, and providers without headroom are skipped while another provider\nin the same group has some. Usage is tracked per replica.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderCapacity"
             },
             {
               "type": "null"
@@ -9861,6 +9883,40 @@
         "source"
       ]
     },
+    "ProviderCapacity": {
+      "description": "Limits enforced by the upstream provider for this provider entry, per minute.\nUnset dimensions are not limited.",
+      "type": "object",
+      "properties": {
+        "rpm": {
+          "description": "Requests per minute.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "inputTpm": {
+          "description": "Input (prompt) tokens per minute.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "outputTpm": {
+          "description": "Output (completion) tokens per minute.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
     "LocalAIProviders": {
       "type": "object",
       "properties": {
@@ -9870,6 +9926,14 @@
           "items": {
             "$ref": "#/$defs/LocalNamedAIProvider"
           }
+        },
+        "reserveForHighPriority": {
+          "description": "Fraction of capacity headroom (0 to 1, exclusive) that low-priority requests leave to\nhigh-priority ones: a low-priority request only uses a provider in this group whose\nheadroom is above this value. Requires `priority` on the backend.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "additionalProperties": false,
@@ -12707,6 +12771,17 @@
           "items": {
             "$ref": "#/$defs/LLMRouteMatch"
           }
+        },
+        "capacity": {
+          "description": "capacity declares the limits the upstream enforces for this model, per minute. Virtual model\nfailover prefers targets with more remaining headroom and skips targets without headroom\nwhile another target at the same priority has some. Usage is tracked per replica.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderCapacity"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -12868,6 +12943,25 @@
           "items": {
             "$ref": "#/$defs/LocalLLMFailoverTarget"
           }
+        },
+        "priority": {
+          "description": "priority is a CEL expression evaluated against the request to classify its priority: a result\nof `\"low\"` makes it low priority, anything else (including errors) high priority.\nFor example `apiKey.class == \"batch\" ? \"low\" : \"high\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expression"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reserveForHighPriority": {
+          "description": "reserveForHighPriority is the fraction of capacity headroom (0 to 1, exclusive) that\nlow-priority requests leave to high-priority ones, at every priority level. Low-priority\nrequests are refused with a 429 when no target has more headroom than this.\nRequires `priority`.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "additionalProperties": false,
