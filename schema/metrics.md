@@ -41,6 +41,12 @@
 
 | Metric | Type | Unit | Description |
 | --- | --- | --- | --- |
+| `agentgateway_budget_exceeded_requests_total` | Counter | — | Total requests checked while an API key budget was exhausted; requests counted with action="Block" were rejected. |
+| `agentgateway_budget_limit` | Gauge | — | Configured limit of an API key budget, in the budget unit. |
+| `agentgateway_budget_used` | Gauge | — | Usage charged to an API key budget in its current window, in the budget unit. |
+| `agentgateway_budget_utilization_ratio` | Gauge | ratio | Fraction of an API key budget used in its current window; 1 or more means exhausted. |
+| `agentgateway_budget_window_end_timestamp_seconds` | Gauge | seconds | End of an API key budget's current window as a Unix timestamp. |
+| `agentgateway_budget_window_start_timestamp_seconds` | Gauge | seconds | Start of an API key budget's current window as a Unix timestamp. |
 | `agentgateway_cost_catalog_lookups_total` | Counter | — | Total number of model cost catalog lookups by resolution status. |
 | `agentgateway_gen_ai_client_cost_usd_total` | Counter | usd | Cumulative USD cost of generative AI requests. |
 | `agentgateway_gen_ai_client_token_usage` | Histogram | — | Number of tokens used per request. |

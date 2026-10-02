@@ -94,6 +94,7 @@ pub fn generate_metrics() -> Result<()> {
 		} else if name.starts_with("gen_ai_")
 			|| name.starts_with("guardrail_")
 			|| name.starts_with("cost_catalog_")
+			|| name.starts_with("budget_")
 		{
 			4
 		} else {

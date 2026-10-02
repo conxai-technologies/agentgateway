@@ -132,7 +132,7 @@ impl BudgetPolicy {
 			.collect()
 	}
 
-	fn reconcile(&self, persisted: HashMap<String, PersistedBudgetUsage>, now: UnixDate) {
+	pub(super) fn reconcile(&self, persisted: HashMap<String, PersistedBudgetUsage>, now: UnixDate) {
 		for (budget_id, row) in &persisted {
 			match self.counters.entry(budget_id.clone()) {
 				dashmap::mapref::entry::Entry::Occupied(mut entry) => {
@@ -275,6 +275,7 @@ impl BudgetCounter {
 			window_start: row.window_start,
 			window_end: row.window_end,
 			updated_at: row.updated_at,
+			exceeded_requests: 0,
 		}
 	}
 
