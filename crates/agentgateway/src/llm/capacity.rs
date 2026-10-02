@@ -75,6 +75,9 @@ pub struct CapacityExhausted {
 	pub retry_after: u64,
 }
 
+/// A selected provider and its load-balancing state.
+type Candidate = (Arc<NamedAIProvider>, Arc<EndpointInfo>);
+
 /// Selection settings of an AI backend whose providers declare capacity.
 #[derive(Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,7 +148,7 @@ impl CapacityPolicy {
 		affinity_key: Option<u64>,
 		priority: Priority,
 		now: Instant,
-	) -> Result<Option<(Arc<NamedAIProvider>, Arc<EndpointInfo>)>, CapacityExhausted> {
+	) -> Result<Option<Candidate>, CapacityExhausted> {
 		let shed = priority == Priority::Low && self.is_configured();
 		let selected = providers.select_eligible(affinity_key, |group, p| {
 			let headroom = p.capacity.as_ref().map_or(1.0, |c| c.headroom_at(now));
