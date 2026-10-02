@@ -159,14 +159,37 @@ mcp:
 {{- if not (kindIs "map" $config) -}}
 {{- fail "config.config must be a YAML mapping" -}}
 {{- end -}}
+{{- $database := include "agentgateway-standalone.databaseConfig" . | fromYaml -}}
+{{- if $database -}}
+{{- if hasKey $config "database" -}}
+{{- fail "set the database connection with the 'database' value, not 'config.config.database'" -}}
+{{- end -}}
+{{- $_ := set $config "database" $database -}}
+{{- end -}}
 {{- if eq .Values.mode "database" -}}
-{{- $_ := set $config "database" (dict "url" .Values.database.postgres.url) -}}
 {{- $_ := set $config "storage" (dict "mode" "hybrid") -}}
 {{- else -}}
-{{- $_ := set $config "storage" (dict "mode" "file") -}}
+{{- $_ := set $config "storage" (dict "mode" "readOnly") -}}
 {{- end }}
 {{- $_ := set $renderedConfig "config" $config -}}
 {{ toYaml $renderedConfig }}
+{{- end }}
+
+{{/*
+The config.database section for the 'database' value, or nothing when no database is set.
+A connection string from an existing secret is referenced through an environment variable,
+which agentgateway expands when it reads the config file.
+*/}}
+{{- define "agentgateway-standalone.databaseConfig" -}}
+{{- $postgres := .Values.database.postgres -}}
+{{- if $postgres.existingSecret.name }}
+url: ${AGENTGATEWAY_DATABASE_URL}
+{{- else if $postgres.url }}
+url: {{ $postgres.url | quote }}
+{{- end }}
+{{- if and (or $postgres.existingSecret.name $postgres.url) (not (kindIs "invalid" .Values.database.maxConnections)) }}
+maxConnections: {{ int .Values.database.maxConnections }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -186,11 +209,27 @@ rendered configuration, plus config.modelCatalog, are reloaded without restartin
 {{- fail (printf "mode must be one of: readonly, database (got %q)" $mode) -}}
 {{- end -}}
 {{- $postgresUrl := .Values.database.postgres.url | default "" -}}
-{{- if eq $mode "database" -}}
-{{- if not (regexMatch "^postgres(ql)?://" $postgresUrl) -}}
-{{- fail (printf "mode=database requires database.postgres.url to start with postgres:// or postgresql:// (got %q)" $postgresUrl) -}}
+{{- $secretName := .Values.database.postgres.existingSecret.name | default "" -}}
+{{- if and $postgresUrl $secretName -}}
+{{- fail "set only one of database.postgres.url and database.postgres.existingSecret.name" -}}
 {{- end -}}
-{{- else if $postgresUrl -}}
-{{- fail (printf "database.postgres.url is only supported when mode=database (got mode %q)" $mode) -}}
+{{- if and $postgresUrl (not (regexMatch "^postgres(ql)?://" $postgresUrl)) -}}
+{{- fail (printf "database.postgres.url must start with postgres:// or postgresql:// (got %q)" $postgresUrl) -}}
+{{- end -}}
+{{- if and $secretName (not .Values.database.postgres.existingSecret.key) -}}
+{{- fail "database.postgres.existingSecret.key must not be empty" -}}
+{{- end -}}
+{{- if and (eq $mode "database") (not (or $postgresUrl $secretName)) -}}
+{{- fail "mode=database requires database.postgres.url or database.postgres.existingSecret.name" -}}
+{{- end -}}
+{{- $maxConnections := .Values.database.maxConnections -}}
+{{- if not (kindIs "invalid" $maxConnections) -}}
+{{- if not (or $postgresUrl $secretName) -}}
+{{- fail "database.maxConnections requires database.postgres.url or database.postgres.existingSecret.name" -}}
+{{- end -}}
+{{- $minConnections := ternary 2 1 (eq $mode "database") -}}
+{{- if lt (int $maxConnections) $minConnections -}}
+{{- fail (printf "database.maxConnections must be at least %d when mode=%s (got %v)" $minConnections $mode $maxConnections) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}

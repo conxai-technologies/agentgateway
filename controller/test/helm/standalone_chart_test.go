@@ -136,6 +136,14 @@ affinity:
         matchLabels:
           app.kubernetes.io/component: standalone
       topologyKey: kubernetes.io/hostname
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/component: standalone
+priorityClassName: agentgateway-critical
 extraEnv:
 - name: LOG_FORMAT
   value: json
@@ -150,6 +158,17 @@ extraVolumes:
 extraVolumeMounts:
 - name: plugin-cache
   mountPath: /var/lib/agentgateway/plugins
+`,
+		},
+		{
+			name: "database-existing-secret",
+			valuesYAML: `mode: database
+database:
+  postgres:
+    existingSecret:
+      name: agw-postgres
+      key: DATABASE_URL
+  maxConnections: 10
 `,
 		},
 		{
@@ -201,7 +220,7 @@ func TestStandaloneChartDefaultRender(t *testing.T) {
 	require.Contains(t, out, "name: test-release-config")
 	require.Contains(t, out, "namespace: default")
 	require.NotContains(t, out, "database:")
-	require.Contains(t, out, "storage:\n        mode: file")
+	require.Contains(t, out, "storage:\n        mode: readOnly")
 	require.Contains(t, out, "gateways:")
 	require.Contains(t, out, "default:")
 	require.Contains(t, out, "port: 4000")
@@ -229,6 +248,9 @@ func TestStandaloneChartDefaultRender(t *testing.T) {
 	require.NotContains(t, out, "name: AGENTGATEWAY_ENV")
 	require.NotContains(t, out, "name: OIDC_COOKIE_SECRET")
 	require.NotContains(t, out, "secretKeyRef:")
+	require.NotContains(t, out, "name: AGENTGATEWAY_DATABASE_URL")
+	require.NotContains(t, out, "priorityClassName:")
+	require.NotContains(t, out, "topologySpreadConstraints:")
 	require.NotContains(t, out, `"helm.sh/hook": test`)
 	require.NotContains(t, out, "curlimages/curl")
 }
@@ -461,7 +483,7 @@ func TestStandaloneChartRejectsDatabaseModeWithoutPostgres(t *testing.T) {
 	_, stderr, err := renderStandaloneChart(t, `mode: database
 `)
 	require.Error(t, err)
-	require.Contains(t, stderr, "mode=database requires database.postgres.url")
+	require.Contains(t, stderr, "mode=database requires database.postgres.url or database.postgres.existingSecret.name")
 }
 
 func TestStandaloneChartRejectsDatabaseModeWithNonPostgresURL(t *testing.T) {
@@ -471,17 +493,86 @@ database:
     url: sqlite:///config/data.db
 `)
 	require.Error(t, err)
-	require.Contains(t, stderr, "to start with postgres:// or postgresql://")
+	require.Contains(t, stderr, "database.postgres.url must start with postgres:// or postgresql://")
 }
 
-func TestStandaloneChartRejectsPostgresOutsideDatabaseMode(t *testing.T) {
-	_, stderr, err := renderStandaloneChart(t, `mode: readonly
+func TestStandaloneChartReadonlyModeWithDatabase(t *testing.T) {
+	out, stderr, err := renderStandaloneChart(t, `mode: readonly
 database:
   postgres:
     url: postgres://agw:secret@postgres.default.svc:5432/agw
 `)
+	require.NoError(t, err, "helm template failed: %s", stderr)
+	require.Contains(t, out, "database:\n        url: postgres://agw:secret@postgres.default.svc:5432/agw")
+	require.Contains(t, out, "storage:\n        mode: readOnly")
+	require.NotContains(t, out, "name: AGENTGATEWAY_DATABASE_URL")
+}
+
+func TestStandaloneChartDatabaseFromExistingSecret(t *testing.T) {
+	for _, mode := range []string{"readonly", "database"} {
+		t.Run(mode, func(t *testing.T) {
+			out, stderr, err := renderStandaloneChart(t, `mode: `+mode+`
+database:
+  postgres:
+    existingSecret:
+      name: agw-postgres
+`)
+			require.NoError(t, err, "helm template failed: %s", stderr)
+			require.Contains(t, out, "database:\n        url: ${AGENTGATEWAY_DATABASE_URL}")
+			require.Contains(t, out, "- name: AGENTGATEWAY_DATABASE_URL\n          valueFrom:\n            secretKeyRef:\n              name: agw-postgres\n              key: url")
+			require.NotContains(t, out, "postgres://")
+			require.NotContains(t, out, "maxConnections:")
+		})
+	}
+}
+
+func TestStandaloneChartDatabaseMaxConnections(t *testing.T) {
+	out, stderr, err := renderStandaloneChart(t, `database:
+  postgres:
+    url: postgres://agw@postgres.default.svc:5432/agw
+  maxConnections: 1
+`)
+	require.NoError(t, err, "helm template failed: %s", stderr)
+	require.Contains(t, out, "maxConnections: 1\n")
+
+	_, stderr, err = renderStandaloneChart(t, `mode: database
+database:
+  postgres:
+    url: postgres://agw@postgres.default.svc:5432/agw
+  maxConnections: 1
+`)
 	require.Error(t, err)
-	require.Contains(t, stderr, `database.postgres.url is only supported when mode=database (got mode "readonly")`)
+	require.Contains(t, stderr, "database.maxConnections must be at least 2 when mode=database (got 1)")
+
+	_, stderr, err = renderStandaloneChart(t, `database:
+  maxConnections: 5
+`)
+	require.Error(t, err)
+	require.Contains(t, stderr, "database.maxConnections requires database.postgres.url or database.postgres.existingSecret.name")
+}
+
+func TestStandaloneChartRejectsDatabaseUrlAndExistingSecret(t *testing.T) {
+	_, stderr, err := renderStandaloneChart(t, `database:
+  postgres:
+    url: postgres://agw@postgres.default.svc:5432/agw
+    existingSecret:
+      name: agw-postgres
+`)
+	require.Error(t, err)
+	require.Contains(t, stderr, "set only one of database.postgres.url and database.postgres.existingSecret.name")
+}
+
+func TestStandaloneChartRejectsDatabaseInNestedConfig(t *testing.T) {
+	_, stderr, err := renderStandaloneChart(t, `database:
+  postgres:
+    url: postgres://agw@postgres.default.svc:5432/agw
+config:
+  config:
+    database:
+      url: postgres://other@postgres.default.svc:5432/agw
+`)
+	require.Error(t, err)
+	require.Contains(t, stderr, "set the database connection with the 'database' value, not 'config.config.database'")
 }
 
 func TestStandaloneChartReadonlyAllowsReplicas(t *testing.T) {
@@ -651,6 +742,11 @@ affinity:
           matchLabels:
             app.kubernetes.io/component: standalone
         topologyKey: kubernetes.io/hostname
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+priorityClassName: agentgateway-critical
 extraEnv:
 - name: LOG_FORMAT
   value: json
@@ -672,6 +768,8 @@ extraVolumeMounts:
 	require.Contains(t, out, "kubernetes.io/os: linux")
 	require.Contains(t, out, "key: dedicated")
 	require.Contains(t, out, "podAntiAffinity:")
+	require.Contains(t, out, "topologySpreadConstraints:\n        - maxSkew: 1\n          topologyKey: topology.kubernetes.io/zone")
+	require.Contains(t, out, `priorityClassName: "agentgateway-critical"`)
 	require.Contains(t, out, "name: LOG_FORMAT")
 	require.Contains(t, out, "secretKeyRef:")
 	require.Contains(t, out, "name: plugin-cache")

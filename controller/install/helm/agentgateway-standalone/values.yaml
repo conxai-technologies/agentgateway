@@ -19,7 +19,7 @@ replicaCount: 1
 # -- The number of old ReplicaSets to retain so that you can roll back a Deployment. If unset, Kubernetes defaults to 10. Set to 0 to keep no history.
 revisionHistoryLimit:
 
-# -- How agentgateway persists its configuration. In 'readonly' mode, the chart serves the static configuration in the 'config' value from a read-only ConfigMap. In 'database' mode, the chart treats that configuration as a baseline and stores the changes that you make in the Admin UI in PostgreSQL.
+# -- How agentgateway persists its configuration. In 'readonly' mode, the chart serves the static configuration in the 'config' value from a read-only ConfigMap and sets 'config.storage.mode: readOnly', so the Admin UI and API reject configuration changes. In 'database' mode, the chart sets 'config.storage.mode: hybrid': the configuration in the 'config' value is a baseline, and the changes that you make in the Admin UI are stored in PostgreSQL. Database mode requires a database connection. In either mode, a configured database also backs budgets and the request log store.
 mode: readonly
 
 # -- Override the Kubernetes Deployment strategy for the agentgateway proxy.
@@ -80,6 +80,12 @@ tolerations: []
 
 # -- The affinity rules for scheduling the agentgateway proxy pod.
 affinity: {}
+
+# -- How agentgateway proxy pods are spread across topology domains, such as nodes or zones.
+topologySpreadConstraints: []
+
+# -- The priority class name for the agentgateway proxy pod.
+priorityClassName: ""
 
 # -- The DNS configuration for the agentgateway proxy pod, which is merged with the settings that the kubelet derives from the pod's dnsPolicy. For example, 'options: [{name: ndots, value: "3"}]'.
 dnsConfig: {}
@@ -152,14 +158,21 @@ monitoring:
     # -- How often Prometheus scrapes the agentgateway proxy's metrics.
     interval: 15s
 
-# -- The standalone agentgateway configuration to serve, in the same format as a local agentgateway config file. Changes outside the nested 'config' section, plus 'config.modelCatalog', are applied without restarting the pods. Changes to other nested 'config' settings restart the pods because agentgateway reads them only at startup. The chart manages the 'config.storage' and 'config.database' sections for you based on the 'mode' value, so do not set them here.
+# -- The standalone agentgateway configuration to serve, in the same format as a local agentgateway config file. Changes outside the nested 'config' section, plus 'config.modelCatalog', are applied without restarting the pods. Changes to other nested 'config' settings restart the pods because agentgateway reads them only at startup. The chart manages the 'config.storage' section based on the 'mode' value, and the 'config.database' section when you configure the 'database' value, so do not set them here.
 config: {}
 
-# Postgres connection used by database mode.
+# The PostgreSQL database that agentgateway uses for budgets, the request log store, and, in database mode, the configuration changes that you make in the Admin UI. Required in database mode and optional in readonly mode. Set either 'postgres.url' or 'postgres.existingSecret.name', not both.
 database:
   postgres:
-    # -- The PostgreSQL connection string that the the chart renders into the ConfigMap. Required in database mode.
+    # -- The PostgreSQL connection string, starting with 'postgres://' or 'postgresql://'. The chart renders this value into the ConfigMap in plain text, so prefer 'existingSecret' for connection strings that contain a password.
     url: ""
+    existingSecret:
+      # -- The name of an existing secret in the release namespace that holds the PostgreSQL connection string. The chart injects the connection string into the container as the 'AGENTGATEWAY_DATABASE_URL' environment variable and references it from the ConfigMap, so the connection string is not stored in the ConfigMap. The connection string must be a valid URL, with special characters in the password percent-encoded. Pods read the secret when they start, so restart the pods after you change it.
+      name: ""
+      # -- The key in the existing secret that holds the PostgreSQL connection string.
+      key: url
+  # -- The maximum number of connections in each pod's database connection pool. If unset, agentgateway defaults to 5. Database mode requires at least 2.
+  maxConnections:
 
 # OIDC secret that agentgateway uses to sign the Admin UI session cookie.
 oidc:
