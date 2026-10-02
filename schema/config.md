@@ -4439,7 +4439,8 @@
 |`binds[].listeners[].routes[].policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`binds[].listeners[].routes[].policies.oidc.jwks.url`|string||
 |`binds[].listeners[].routes[].policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`binds[].listeners[].routes[].policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`binds[].listeners[].routes[].policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`binds[].listeners[].routes[].policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`binds[].listeners[].routes[].policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`binds[].listeners[].routes[].policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`binds[].listeners[].routes[].policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -19106,7 +19107,8 @@
 |`binds[].listeners[].policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`binds[].listeners[].policies.oidc.jwks.url`|string||
 |`binds[].listeners[].policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`binds[].listeners[].policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`binds[].listeners[].policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`binds[].listeners[].policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`binds[].listeners[].policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`binds[].listeners[].policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`binds[].listeners[].policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -26221,7 +26223,8 @@
 |`policies[].policy.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`policies[].policy.oidc.jwks.url`|string||
 |`policies[].policy.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`policies[].policy.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`policies[].policy.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`policies[].policy.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`policies[].policy.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`policies[].policy.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`policies[].policy.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -44856,7 +44859,8 @@
 |`routeGroups[].routes[].policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`routeGroups[].routes[].policies.oidc.jwks.url`|string||
 |`routeGroups[].routes[].policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`routeGroups[].routes[].policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`routeGroups[].routes[].policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`routeGroups[].routes[].policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`routeGroups[].routes[].policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`routeGroups[].routes[].policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`routeGroups[].routes[].policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -59230,7 +59234,8 @@
 |`gateways.*.listeners[].oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`gateways.*.listeners[].oidc.jwks.url`|string||
 |`gateways.*.listeners[].oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`gateways.*.listeners[].oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`gateways.*.listeners[].oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`gateways.*.listeners[].oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`gateways.*.listeners[].oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`gateways.*.listeners[].oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`gateways.*.listeners[].oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -60564,7 +60569,8 @@
 |`gateways.*.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`gateways.*.oidc.jwks.url`|string||
 |`gateways.*.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`gateways.*.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`gateways.*.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`gateways.*.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`gateways.*.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`gateways.*.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`gateways.*.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -66168,7 +66174,8 @@
 |`routes[].policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`routes[].policies.oidc.jwks.url`|string||
 |`routes[].policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`routes[].policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`routes[].policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`routes[].policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`routes[].policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`routes[].policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`routes[].policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -84916,7 +84923,8 @@
 |`llm.policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`llm.policies.oidc.jwks.url`|string||
 |`llm.policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`llm.policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`llm.policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`llm.policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`llm.policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`llm.policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`llm.policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -93692,7 +93700,8 @@
 |`mcp.policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`mcp.policies.oidc.jwks.url`|string||
 |`mcp.policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`mcp.policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`mcp.policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`mcp.policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`mcp.policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`mcp.policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`mcp.policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
@@ -95859,7 +95868,8 @@
 |`ui.policies.oidc.jwks.file`|string|Path to a file on disk to load the value from.|
 |`ui.policies.oidc.jwks.url`|string||
 |`ui.policies.oidc.clientId`|string|OAuth2 client identifier used for authorization and token exchange.|
-|`ui.policies.oidc.clientSecret`|string|OAuth2 client secret used for token exchange.|
+|`ui.policies.oidc.clientSecret`|object|OAuth2 client secret used for token exchange, inline or `{file: <path>}`.<br>Surrounding whitespace is trimmed.|
+|`ui.policies.oidc.clientSecret.file`|string|Path to a file on disk to load the value from.|
 |`ui.policies.oidc.redirectURI`|string|Absolute callback URI handled by the gateway.<br>Unauthenticated document navigations are redirected back through this login flow.|
 |`ui.policies.oidc.scopes`|[]string|Additional OAuth2 scopes to request. `openid` is always included. Add `offline_access` when<br>the provider requires it to issue a refresh token; returned refresh tokens are used<br>automatically.|
 |`ui.policies.oidc.login`|object|Optional explicit login endpoint and pre-login redirect. Omit for automatic OAuth login.|
