@@ -4458,8 +4458,11 @@
 |`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`binds[].listeners[].routes[].policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`binds[].listeners[].routes[].policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`binds[].listeners[].routes[].policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -20366,8 +20369,11 @@
 |`binds[].listeners[].policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`binds[].listeners[].policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`binds[].listeners[].policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`binds[].listeners[].policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`binds[].listeners[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`binds[].listeners[].policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`binds[].listeners[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`binds[].listeners[].policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`binds[].listeners[].policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`binds[].listeners[].policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`binds[].listeners[].policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`binds[].listeners[].policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`binds[].listeners[].policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -26214,8 +26220,11 @@
 |`policies[].policy.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`policies[].policy.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`policies[].policy.apiKey.keys[].budgets[].limit.amount`|number||
-|`policies[].policy.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`policies[].policy.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`policies[].policy.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`policies[].policy.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`policies[].policy.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`policies[].policy.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`policies[].policy.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`policies[].policy.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`policies[].policy.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`policies[].policy.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -44828,8 +44837,11 @@
 |`routeGroups[].routes[].policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`routeGroups[].routes[].policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`routeGroups[].routes[].policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`routeGroups[].routes[].policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`routeGroups[].routes[].policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`routeGroups[].routes[].policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`routeGroups[].routes[].policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -60443,8 +60455,11 @@
 |`gateways.*.listeners[].apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`gateways.*.listeners[].apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`gateways.*.listeners[].apiKey.keys[].budgets[].limit.amount`|number||
-|`gateways.*.listeners[].apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`gateways.*.listeners[].apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`gateways.*.listeners[].apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`gateways.*.listeners[].apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`gateways.*.listeners[].apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`gateways.*.listeners[].apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`gateways.*.listeners[].apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`gateways.*.listeners[].apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`gateways.*.listeners[].apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`gateways.*.listeners[].apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -61774,8 +61789,11 @@
 |`gateways.*.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`gateways.*.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`gateways.*.apiKey.keys[].budgets[].limit.amount`|number||
-|`gateways.*.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`gateways.*.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`gateways.*.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`gateways.*.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`gateways.*.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`gateways.*.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`gateways.*.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`gateways.*.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`gateways.*.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`gateways.*.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -66113,8 +66131,11 @@
 |`routes[].policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`routes[].policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`routes[].policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`routes[].policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`routes[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`routes[].policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`routes[].policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`routes[].policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`routes[].policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`routes[].policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`routes[].policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`routes[].policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`routes[].policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -86095,8 +86116,11 @@
 |`llm.policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`llm.policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`llm.policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`llm.policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`llm.policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`llm.policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`llm.policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`llm.policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`llm.policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`llm.policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`llm.policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`llm.policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`llm.policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -93605,8 +93629,11 @@
 |`mcp.policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`mcp.policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`mcp.policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`mcp.policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`mcp.policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`mcp.policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`mcp.policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`mcp.policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`mcp.policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`mcp.policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`mcp.policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`mcp.policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`mcp.policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
@@ -96402,8 +96429,11 @@
 |`ui.policies.apiKey.keys[].budgets[].limit`|object|Maximum usage allowed during the window.|
 |`ui.policies.apiKey.keys[].budgets[].limit.unit`|enum|Possible values: `USD`, `Tokens`.|
 |`ui.policies.apiKey.keys[].budgets[].limit.amount`|number||
-|`ui.policies.apiKey.keys[].budgets[].window`|object|Rolling window over which usage will be accumulated.|
-|`ui.policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months.|
+|`ui.policies.apiKey.keys[].budgets[].window`|object|Window over which usage is accumulated before it resets.<br>Exactly one of rolling or calendar may be set.|
+|`ui.policies.apiKey.keys[].budgets[].window.rolling`|string|Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.<br>Windows are aligned to the Unix epoch rather than starting with the first request: `1h`<br>follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day<br>periods rather than calendar months. Use `calendar` for budgets that reset on the first of<br>the month.|
+|`ui.policies.apiKey.keys[].budgets[].window.calendar`|object|Calendar period, such as a month that resets at midnight on the first day of each month.|
+|`ui.policies.apiKey.keys[].budgets[].window.calendar.period`|enum|Calendar period over which usage is accumulated.<br>Possible values: `Day`, `Week`, `Month`.|
+|`ui.policies.apiKey.keys[].budgets[].window.calendar.timeZone`|string|IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.<br>Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.|
 |`ui.policies.apiKey.keys[].budgets[].onBudgetExceeded`|enum|Action taken when the budget is exceeded.<br>Possible values: `Audit`, `Block`.|
 |`ui.policies.apiKey.keys[].keyHash`|string|SHA-256 hash of an API key value to accept, in `sha256:<hex>` format.|
 |`ui.policies.apiKey.mode`|enum|Controls whether requests must include a valid API key.<br>Possible values: `strict`, `optional`, `permissive`.|
