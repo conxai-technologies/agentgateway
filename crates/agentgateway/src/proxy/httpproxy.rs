@@ -4482,11 +4482,15 @@ mod tests {
 			retry["budget"] = budget;
 		}
 		bind.attach_route_policy(json!({ "retry": retry })).await;
-		let io = bind.serve_http(proxymock::BIND_KEY);
 
-		let responses = futures::future::join_all(
-			(0..BURST).map(|_| proxymock::send_request(io.clone(), Method::GET, "http://lo")),
-		)
+		// Each in-memory client carries a single connection, so use one per request.
+		let responses = futures::future::join_all((0..BURST).map(|_| {
+			proxymock::send_request(
+				bind.serve_http(proxymock::BIND_KEY),
+				Method::GET,
+				"http://lo",
+			)
+		}))
 		.await;
 		for res in responses {
 			assert_eq!(res.status(), 503);
