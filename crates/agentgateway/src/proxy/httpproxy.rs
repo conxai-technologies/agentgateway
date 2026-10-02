@@ -4388,9 +4388,10 @@ mod tests {
 		}))
 		.expect("local AI backend");
 		let ai = local_backend
-			.translate(&crate::resource_manager::ResourceFetcher::direct(
-				bind.pi.upstream.clone(),
-			))
+			.translate(
+				"failover",
+				&crate::resource_manager::ResourceFetcher::direct(bind.pi.upstream.clone()),
+			)
 			.await
 			.expect("translated backend");
 		let providers = ai.providers.clone();

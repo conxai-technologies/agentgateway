@@ -173,7 +173,7 @@ pub fn setup_llm_named_provider_mock_with_config(
 	let t = setup_proxy_test_with_config(config);
 	let resources = crate::resource_manager::ResourceFetcher::direct(t.pi.upstream.clone());
 	let be = futures::executor::block_on(
-		crate::types::local::LocalAIBackend::Provider(provider).translate(&resources),
+		crate::types::local::LocalAIBackend::Provider(provider).translate("default", &resources),
 	)
 	.unwrap();
 	let b = Backend::AI(
