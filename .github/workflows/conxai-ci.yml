@@ -1,0 +1,123 @@
+# conxai fork CI: the Rust proxy checks of upstream's pull_request.yml (proxy-lint,
+# proxy-test on Linux), on GitHub-hosted runners. Upstream's own workflows are
+# disabled in this fork; they need Blacksmith runners and release credentials.
+#
+# Runs on every push to conxai/main, and on demand against any ref:
+#   gh workflow run conxai-ci.yml -R conxai-technologies/agentgateway -f ref=conxai/<topic>
+# The run is named after the ref it tests, so `gh run list -w conxai-ci.yml` finds it.
+#
+# Skipped from upstream: the Windows/macOS test matrix, the keycloak-backed example
+# validation (needs docker compose services), UI lint/e2e, and every controller (Go,
+# kind, conformance) job. We run the standalone data plane only.
+name: conxai-ci
+run-name: conxai-ci ${{ inputs.ref || github.ref_name }}
+
+on:
+  push:
+    branches: [conxai/main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to test (empty = the dispatching ref)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # A re-dispatch of the same ref supersedes the older run; pushes never cancel.
+  group: conxai-ci-${{ github.event_name }}-${{ inputs.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+  CARGO_BUILD_WARNINGS: deny
+  CARGO_INCREMENTAL: 0
+  # No debug info: CI does not need it, and it is most of the target/ size.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  # Only builds of conxai/main itself roll the caches forward.
+  SAVE_CACHE: ${{ github.event_name == 'push' || inputs.ref == '' || inputs.ref == 'conxai/main' }}
+
+jobs:
+  lint:
+    name: Proxy lint (generated files, fmt, clippy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version && cargo --version && cargo clippy --version && cargo fmt --version
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: rust-lint-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: rust-lint-${{ runner.os }}-
+      - name: Generated files are current
+        run: make generate-schema check-clean-repo check-default-members
+      - name: fmt and clippy (make lint)
+        run: make lint
+      - if: env.SAVE_CACHE == 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  test:
+    name: Proxy test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version && cargo --version
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: rust-test-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: rust-test-${{ runner.os }}-
+      - name: Test (make test)
+        run: make test
+      - name: Disk usage
+        if: always()
+        run: df -h / && du -sh target 2>/dev/null || true
+      - if: env.SAVE_CACHE == 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.cache.outputs.cache-primary-key }}
