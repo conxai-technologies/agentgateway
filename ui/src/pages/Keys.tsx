@@ -671,7 +671,7 @@ function KeyEditor(props: {
 		budgets.some(
 			budget =>
 				!budget.name.trim() ||
-				!budget.window.rolling?.trim() ||
+				!budgetWindowValid(budget.window) ||
 				!Number.isFinite(budget.limit.amount) ||
 				budget.limit.amount < 0 ||
 				(budget.limit.unit === 'Tokens' && !Number.isInteger(budget.limit.amount))
@@ -865,7 +865,7 @@ function KeyEditor(props: {
 				<BudgetEditor budgets={budgets} apiKeyName={keyName(props.initial)} onChange={setBudgets} />
 				{submitted && invalidBudgets ? (
 					<StatusBanner state="bad" title="Invalid budgets">
-						Budget names must be present and unique, rolling windows are required, and amounts must
+						Budget names must be present and unique, budget windows are required, and amounts must
 						be non-negative whole numbers.
 					</StatusBanner>
 				) : null}
@@ -1039,18 +1039,41 @@ function BudgetEditor(props: {
 												placeholder="monthly-spend"
 											/>
 										</Field>
-										<Field label="Rolling window" hint="Examples: 24h, 7d, or 30d.">
-											<input
-												value={budget.window.rolling ?? ''}
-												onChange={event =>
-													updateBudget(index, {
-														...budget,
-														window: { rolling: event.target.value }
-													})
+										<FieldGroup label="Window">
+											<SegmentedControl
+												ariaLabel={`Budget ${index + 1} window`}
+												value={'rolling' in budget.window ? 'rolling' : 'calendar'}
+												options={[
+													{ value: 'rolling', label: 'Rolling', description: 'Fixed duration' },
+													{ value: 'calendar', label: 'Calendar', description: 'Day, week, month' }
+												]}
+												onChange={kind =>
+													updateBudget(index, { ...budget, window: defaultBudgetWindow(kind) })
 												}
-												placeholder="30d"
 											/>
-										</Field>
+										</FieldGroup>
+										{'rolling' in budget.window ? (
+											<Field label="Rolling window" hint="Examples: 24h, 7d, or 30d.">
+												<input
+													value={budget.window.rolling}
+													onChange={event =>
+														updateBudget(index, {
+															...budget,
+															window: { rolling: event.target.value }
+														})
+													}
+													placeholder="30d"
+												/>
+											</Field>
+										) : (
+											<CalendarWindowFields
+												index={index}
+												value={budget.window.calendar}
+												onChange={calendar =>
+													updateBudget(index, { ...budget, window: { calendar } })
+												}
+											/>
+										)}
 										<Field label="Limit amount">
 											<input
 												type="number"
@@ -1145,7 +1168,7 @@ function BudgetUsage(props: {
 						? `${Math.round(fraction * 100)}% · resets ${formatRelativeTime(
 								new Date(live.window.end).toISOString()
 							)}`
-						: `No usage recorded yet · ${budget.window.rolling || 'unset'} rolling window`}
+						: `No usage recorded yet · ${budgetWindowLabel(budget.window)}`}
 				</span>
 			</div>
 			<div className="api-key-budget-meter">
@@ -1153,6 +1176,57 @@ function BudgetUsage(props: {
 			</div>
 		</div>
 	);
+}
+
+type BudgetWindow = VirtualApiKeyBudget['window'];
+type CalendarBudgetWindow = Extract<BudgetWindow, { calendar: unknown }>['calendar'];
+
+function CalendarWindowFields(props: {
+	index: number;
+	value: CalendarBudgetWindow;
+	onChange: (value: CalendarBudgetWindow) => void;
+}) {
+	return (
+		<>
+			<FieldGroup label="Calendar period">
+				<SegmentedControl
+					ariaLabel={`Budget ${props.index + 1} calendar period`}
+					value={props.value.period}
+					options={[
+						{ value: 'Day', label: 'Day' },
+						{ value: 'Week', label: 'Week' },
+						{ value: 'Month', label: 'Month' }
+					]}
+					onChange={period => props.onChange({ ...props.value, period })}
+				/>
+			</FieldGroup>
+			<Field label="Time zone" hint="IANA name such as Europe/Berlin. Defaults to UTC.">
+				<input
+					value={props.value.timeZone ?? ''}
+					onChange={event =>
+						props.onChange({ ...props.value, timeZone: event.target.value || undefined })
+					}
+					placeholder="UTC"
+				/>
+			</Field>
+		</>
+	);
+}
+
+function defaultBudgetWindow(kind: 'rolling' | 'calendar'): BudgetWindow {
+	return kind === 'rolling' ? { rolling: '30d' } : { calendar: { period: 'Month' } };
+}
+
+function budgetWindowValid(window: BudgetWindow) {
+	return !('rolling' in window) || Boolean(window.rolling.trim());
+}
+
+function budgetWindowLabel(window: BudgetWindow) {
+	if ('rolling' in window) {
+		return `${window.rolling.trim() || 'unset'} rolling window`;
+	}
+	const timeZone = window.calendar.timeZone?.trim() || 'UTC';
+	return `calendar ${window.calendar.period.toLowerCase()} (${timeZone})`;
 }
 
 function budgetProgress(budget: VirtualApiKeyBudget, live?: BudgetStatus) {
@@ -1365,7 +1439,7 @@ function BudgetSummary(props: {
 						content={`${budgetAmountLabel(used, budget.limit.unit)} of ${budgetAmountLabel(
 							budget.limit.amount,
 							budget.limit.unit
-						)} per ${budget.window.rolling}`}
+						)} per ${budgetWindowLabel(budget.window)}`}
 					>
 						<div className="key-budget-summary-row">
 							<span className="key-budget-summary-name">{budget.name}</span>

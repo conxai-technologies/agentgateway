@@ -8,8 +8,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
 use super::{
-	BudgetCounter, BudgetLimitUnit, BudgetPolicy, NANODOLLARS_PER_USD, PendingBudgetUsage,
-	PersistedBudgetUsage, UnixDate,
+	BudgetCounter, BudgetLimitUnit, BudgetPolicy, BudgetWindow, NANODOLLARS_PER_USD,
+	PendingBudgetUsage, PersistedBudgetUsage, UnixDate,
 };
 
 const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
@@ -269,9 +269,13 @@ impl BudgetCounter {
 			},
 			pending: Decimal::ZERO,
 			unit: row.unit,
-			rolling: (row.window_end - row.window_start)
-				.to_std()
-				.unwrap_or(Duration::ZERO),
+			// Rows do not record their window definition. This placeholder only matters until the
+			// budget is configured, which keeps the row if it is a window of the configured definition.
+			window: BudgetWindow::Rolling(
+				(row.window_end - row.window_start)
+					.to_std()
+					.unwrap_or(Duration::ZERO),
+			),
 			window_start: row.window_start,
 			window_end: row.window_end,
 			updated_at: row.updated_at,
@@ -289,9 +293,7 @@ impl BudgetCounter {
 		self.refresh(now);
 		let row = row.filter(|row| {
 			row.window_end > now
-				&& (row.window_end - row.window_start)
-					.to_std()
-					.is_ok_and(|rolling| rolling == self.rolling)
+				&& self.window.contains(row.window_start, row.window_end)
 				&& row.unit == self.unit
 		});
 		let Some(row) = row else {

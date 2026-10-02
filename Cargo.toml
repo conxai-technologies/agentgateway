@@ -130,6 +130,7 @@ indexmap = { version = "2.13", features = ["serde"] }
 insta = { version = "1.47", features = ["json", "redactions", "filters", "yaml"] }
 ipnet = { version = "2.12", features = ["serde"] }
 itertools = "0.15"
+jiff = "0.2"
 jsonwebtoken = { version = "11" }
 lazy_static = "1.5"
 libc = "0.2"

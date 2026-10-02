@@ -10,7 +10,7 @@ pub struct BudgetStatusResponse {
 	pub budgets: Vec<BudgetStatus>,
 }
 
-/// User-facing snapshot of one budget's definition, current usage, and fixed window.
+/// User-facing snapshot of one budget's definition, current usage, and current window.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BudgetStatus {
@@ -43,6 +43,7 @@ pub struct BudgetStatusUsage {
 pub struct BudgetStatusWindow {
 	pub start: i64,
 	pub end: i64,
+	/// Length of this window. Calendar windows vary in length, for example by month.
 	pub duration_ms: i64,
 	pub expired: bool,
 }
@@ -83,8 +84,7 @@ impl BudgetPolicy {
 					window: BudgetStatusWindow {
 						start: counter.window_start.timestamp_millis(),
 						end: counter.window_end.timestamp_millis(),
-						duration_ms: i64::try_from(counter.rolling.as_millis())
-							.expect("budget duration was validated"),
+						duration_ms: (counter.window_end - counter.window_start).num_milliseconds(),
 						expired,
 					},
 					on_budget_exceeded: definition.budget.on_budget_exceeded.as_str().to_owned(),

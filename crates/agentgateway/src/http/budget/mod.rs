@@ -31,7 +31,7 @@ struct BudgetCounter {
 	amount: Decimal,
 	pending: Decimal,
 	unit: Option<BudgetLimitUnit>,
-	rolling: Duration,
+	window: BudgetWindow,
 	window_start: UnixDate,
 	window_end: UnixDate,
 	updated_at: UnixDate,
@@ -39,12 +39,8 @@ struct BudgetCounter {
 
 impl BudgetCounter {
 	fn configured(api_key: &str, budget: &Budget, now: UnixDate) -> anyhow::Result<Self> {
-		let rolling = budget.window.rolling;
-		anyhow::ensure!(
-			!rolling.is_zero(),
-			"budget rolling window must be greater than zero"
-		);
-		let (window_start, window_end) = budget_window(now, rolling)?;
+		budget.window.validate()?;
+		let (window_start, window_end) = budget_window(now, &budget.window)?;
 		Ok(Self {
 			definition: Some(BudgetDefinition {
 				api_key: api_key.to_owned(),
@@ -53,7 +49,7 @@ impl BudgetCounter {
 			amount: Decimal::ZERO,
 			pending: Decimal::ZERO,
 			unit: Some(budget.limit.unit),
-			rolling,
+			window: budget.window.clone(),
 			window_start,
 			window_end,
 			updated_at: now,
@@ -61,20 +57,22 @@ impl BudgetCounter {
 	}
 
 	/// Attaches the latest definition and resets runtime state if its window or unit changed.
+	/// The current window is kept when it is still a window of the new definition, so a preloaded
+	/// database row survives registration and an equivalent change such as `24h` to a UTC calendar
+	/// day keeps its usage.
 	fn configure(&mut self, api_key: &str, budget: &Budget, now: UnixDate) -> anyhow::Result<()> {
-		let rolling = budget.window.rolling;
-		anyhow::ensure!(
-			!rolling.is_zero(),
-			"budget rolling window must be greater than zero"
-		);
-		if now >= self.window_end || self.rolling != rolling || self.unit != Some(budget.limit.unit) {
-			(self.window_start, self.window_end) = budget_window(now, rolling)?;
+		budget.window.validate()?;
+		if now >= self.window_end
+			|| !budget.window.contains(self.window_start, self.window_end)
+			|| self.unit != Some(budget.limit.unit)
+		{
+			(self.window_start, self.window_end) = budget_window(now, &budget.window)?;
 			self.amount = Decimal::ZERO;
 			self.pending = Decimal::ZERO;
 			self.unit = Some(budget.limit.unit);
 			self.updated_at = now;
 		}
-		self.rolling = rolling;
+		self.window = budget.window.clone();
 		self.definition = Some(BudgetDefinition {
 			api_key: api_key.to_owned(),
 			budget: budget.clone(),
@@ -82,13 +80,13 @@ impl BudgetCounter {
 		Ok(())
 	}
 
-	/// Advances an expired counter to the epoch-aligned fixed window containing `now`.
+	/// Advances an expired counter to the window containing `now`.
 	fn refresh(&mut self, now: UnixDate) {
 		if now < self.window_end {
 			return;
 		}
 		(self.window_start, self.window_end) =
-			budget_window(now, self.rolling).expect("budget duration was validated");
+			budget_window(now, &self.window).expect("budget window was validated");
 		self.amount = Decimal::ZERO;
 		self.pending = Decimal::ZERO;
 		self.updated_at = now;
@@ -131,7 +129,7 @@ pub struct Budget {
 	pub name: String,
 	/// Maximum usage allowed during the window.
 	pub limit: BudgetLimit,
-	/// Rolling window over which usage will be accumulated.
+	/// Window over which usage is accumulated before it resets.
 	pub window: BudgetWindow,
 	/// Action taken when the budget is exceeded.
 	pub on_budget_exceeded: BudgetExceededAction,
@@ -223,14 +221,82 @@ impl BudgetLimitUnit {
 }
 
 #[apply(schema_de!)]
-pub struct BudgetWindow {
+#[derive(PartialEq, Eq)]
+pub enum BudgetWindow {
 	/// Duration of the fixed usage window, for example `1h`, `24h`, or `30d`.
 	/// Windows are aligned to the Unix epoch rather than starting with the first request: `1h`
 	/// follows UTC clock hours, `24h` starts at midnight UTC, and `30d` uses consecutive 30-day
-	/// periods rather than calendar months.
-	#[serde(with = "serde_dur")]
-	#[cfg_attr(feature = "schema", schemars(with = "String"))]
-	pub rolling: Duration,
+	/// periods rather than calendar months. Use `calendar` for budgets that reset on the first of
+	/// the month.
+	Rolling(
+		#[serde(with = "serde_dur")]
+		#[cfg_attr(feature = "schema", schemars(with = "String"))]
+		Duration,
+	),
+	/// Calendar period, such as a month that resets at midnight on the first day of each month.
+	Calendar(CalendarWindow),
+}
+
+#[apply(schema_de!)]
+#[derive(PartialEq, Eq)]
+pub struct CalendarWindow {
+	/// Calendar period over which usage is accumulated.
+	pub period: CalendarPeriod,
+	/// IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.
+	/// Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.
+	pub time_zone: Option<String>,
+}
+
+#[apply(schema_de!)]
+#[derive(Copy, Eq, PartialEq)]
+pub enum CalendarPeriod {
+	/// Starts at midnight.
+	#[serde(rename = "Day")]
+	Day,
+	/// Starts at midnight on Monday (ISO 8601 weeks).
+	#[serde(rename = "Week")]
+	Week,
+	/// Starts at midnight on the first day of the month.
+	#[serde(rename = "Month")]
+	Month,
+}
+
+impl BudgetWindow {
+	/// Rejects windows that cannot be computed, so later window arithmetic cannot fail.
+	pub(crate) fn validate(&self) -> anyhow::Result<()> {
+		match self {
+			Self::Rolling(rolling) => {
+				anyhow::ensure!(
+					!rolling.is_zero(),
+					"budget rolling windows must be greater than zero"
+				);
+				anyhow::ensure!(
+					rolling.as_millis() <= i64::MAX as u128,
+					"budget rolling window is too large"
+				);
+			},
+			Self::Calendar(calendar) => {
+				calendar.time_zone()?;
+			},
+		}
+		Ok(())
+	}
+
+	/// Returns whether `[start, end)` is exactly one window of this definition.
+	fn contains(&self, start: UnixDate, end: UnixDate) -> bool {
+		budget_window(start, self).is_ok_and(|window| window == (start, end))
+	}
+}
+
+impl CalendarWindow {
+	fn time_zone(&self) -> anyhow::Result<jiff::tz::TimeZone> {
+		match &self.time_zone {
+			None => Ok(jiff::tz::TimeZone::UTC),
+			Some(name) => {
+				jiff::tz::TimeZone::get(name).with_context(|| format!("unknown budget time zone {name:?}"))
+			},
+		}
+	}
 }
 
 #[apply(schema_de!)]
@@ -302,13 +368,19 @@ fn budget_id(api_key_id: &str, budget: &Budget) -> String {
 	)
 }
 
-/// Returns the half-open fixed window `[start, end)` containing `now`.
-///
-/// Windows are anchored at the Unix epoch and repeat at exact `rolling` intervals.
+/// Returns the half-open window `[start, end)` containing `now`.
+fn budget_window(now: UnixDate, window: &BudgetWindow) -> anyhow::Result<(UnixDate, UnixDate)> {
+	match window {
+		BudgetWindow::Rolling(rolling) => rolling_window(now, *rolling),
+		BudgetWindow::Calendar(calendar) => calendar_window(now, calendar),
+	}
+}
+
+/// Rolling windows are anchored at the Unix epoch and repeat at exact `rolling` intervals.
 /// For example, a one-hour duration produces UTC clock-hour windows, while a 30-day duration
 /// produces consecutive 30-day periods measured from 1970-01-01 rather than calendar months.
 /// UTC and fixed durations deliberately avoid daylight-saving and other local-calendar behavior.
-fn budget_window(now: UnixDate, rolling: Duration) -> anyhow::Result<(UnixDate, UnixDate)> {
+fn rolling_window(now: UnixDate, rolling: Duration) -> anyhow::Result<(UnixDate, UnixDate)> {
 	let rolling = TimeDelta::from_std(rolling).context("budget rolling window is too large")?;
 	let start = now
 		.duration_trunc(rolling)
@@ -317,6 +389,41 @@ fn budget_window(now: UnixDate, rolling: Duration) -> anyhow::Result<(UnixDate, 
 		.checked_add_signed(rolling)
 		.context("budget rolling window is too large")?;
 	Ok((start, end))
+}
+
+/// Calendar windows start at local midnight in the configured time zone, so their length varies
+/// with the month and with daylight-saving transitions. When midnight does not exist locally, the
+/// window starts at the first instant of the day.
+fn calendar_window(
+	now: UnixDate,
+	calendar: &CalendarWindow,
+) -> anyhow::Result<(UnixDate, UnixDate)> {
+	use jiff::ToSpan;
+
+	let time_zone = calendar.time_zone()?;
+	let today = jiff::Timestamp::from_millisecond(now.timestamp_millis())?
+		.to_zoned(time_zone.clone())
+		.date();
+	let (start, end) = match calendar.period {
+		CalendarPeriod::Day => (today, today.tomorrow()?),
+		CalendarPeriod::Week => {
+			let monday = today.checked_sub(i64::from(today.weekday().to_monday_zero_offset()).days())?;
+			(monday, monday.checked_add(1.week())?)
+		},
+		CalendarPeriod::Month => {
+			let first = today.first_of_month();
+			(first, first.checked_add(1.month())?)
+		},
+	};
+	let instant = |date: jiff::civil::Date| -> anyhow::Result<UnixDate> {
+		let millis = date
+			.to_zoned(time_zone.clone())?
+			.start_of_day()?
+			.timestamp()
+			.as_millisecond();
+		UnixDate::from_timestamp_millis(millis).context("budget calendar window is out of range")
+	};
+	Ok((instant(start)?, instant(end)?))
 }
 
 impl BudgetPolicy {
@@ -372,7 +479,7 @@ impl BudgetPolicy {
 	}
 
 	/// Registers every configured API key budget in memory. A compatible preloaded database row is
-	/// retained; otherwise the counter starts in the current epoch-aligned window.
+	/// retained; otherwise the counter starts in the current window.
 	pub fn register(
 		&self,
 		authentication: &crate::http::apikey::APIKeyAuthentication,
@@ -555,6 +662,315 @@ impl crate::store::RequestPolicyTrait for BudgetPolicy {
 mod tests {
 	use super::*;
 
+	/// Parses `YYYY-MM-DD` (midnight), `YYYY-MM-DD HH:MM`, or RFC 3339 as UTC.
+	fn utc(timestamp: &str) -> UnixDate {
+		if let Ok(date) = chrono::NaiveDate::parse_from_str(timestamp, "%Y-%m-%d") {
+			return date.and_time(chrono::NaiveTime::MIN).and_utc();
+		}
+		if let Ok(time) = chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M") {
+			return time.and_utc();
+		}
+		timestamp.parse().unwrap()
+	}
+
+	fn calendar(period: CalendarPeriod, time_zone: Option<&str>) -> BudgetWindow {
+		BudgetWindow::Calendar(CalendarWindow {
+			period,
+			time_zone: time_zone.map(str::to_owned),
+		})
+	}
+
+	fn assert_windows(window: &BudgetWindow, cases: &[(&str, &str, &str)]) {
+		for (now, start, end) in cases {
+			assert_eq!(
+				budget_window(utc(now), window).unwrap(),
+				(utc(start), utc(end)),
+				"window containing {now}"
+			);
+		}
+	}
+
+	fn budget(window: BudgetWindow) -> Budget {
+		Budget {
+			name: "calendar".to_string(),
+			limit: BudgetLimit {
+				unit: BudgetLimitUnit::Tokens,
+				amount: BudgetAmount(Decimal::from(100)),
+			},
+			window,
+			on_budget_exceeded: BudgetExceededAction::Block,
+		}
+	}
+
+	#[test]
+	fn calendar_months_reset_on_the_first() {
+		assert_windows(
+			&calendar(CalendarPeriod::Month, None),
+			&[
+				// 31, 28, 30 and 31-day months.
+				("2026-01-15 12:00", "2026-01-01", "2026-02-01"),
+				("2026-02-28T23:59:59.999Z", "2026-02-01", "2026-03-01"),
+				("2026-04-30T23:59:59Z", "2026-04-01", "2026-05-01"),
+				("2026-05-01 00:00", "2026-05-01", "2026-06-01"),
+				// Leap years: 2028 is one, 2100 is not.
+				("2028-02-29T23:59:59.999Z", "2028-02-01", "2028-03-01"),
+				("2028-03-01 00:00", "2028-03-01", "2028-04-01"),
+				("2100-02-15 00:00", "2100-02-01", "2100-03-01"),
+				// Year rollover.
+				("2026-12-31T23:59:59.999Z", "2026-12-01", "2027-01-01"),
+				("2027-01-01 00:00", "2027-01-01", "2027-02-01"),
+			],
+		);
+	}
+
+	#[test]
+	fn calendar_days_and_weeks() {
+		assert_windows(
+			&calendar(CalendarPeriod::Day, None),
+			&[
+				("2028-02-29 12:00", "2028-02-29", "2028-03-01"),
+				("2026-12-31T23:59:59.999Z", "2026-12-31", "2027-01-01"),
+			],
+		);
+		assert_windows(
+			&calendar(CalendarPeriod::Week, None),
+			&[
+				// Friday, Monday and Sunday of the same ISO week.
+				("2026-10-02 12:00", "2026-09-28", "2026-10-05"),
+				("2026-09-28 00:00", "2026-09-28", "2026-10-05"),
+				("2026-10-04T23:59:59.999Z", "2026-09-28", "2026-10-05"),
+				// A week spanning a year and month boundary.
+				("2027-01-01 00:00", "2026-12-28", "2027-01-04"),
+			],
+		);
+	}
+
+	#[test]
+	fn calendar_windows_follow_the_time_zone() {
+		assert_windows(
+			&calendar(CalendarPeriod::Month, Some("Europe/Berlin")),
+			&[
+				// 00:30 on April 1st in Berlin is still March in UTC.
+				("2026-03-31 22:30", "2026-03-31 22:00", "2026-04-30 22:00"),
+				("2026-03-31 21:59", "2026-02-28 23:00", "2026-03-31 22:00"),
+				("2026-12-31 23:30", "2026-12-31 23:00", "2027-01-31 23:00"),
+			],
+		);
+		assert_windows(
+			&calendar(CalendarPeriod::Day, Some("Europe/Berlin")),
+			&[
+				// Daylight-saving time starts (23 hours) and ends (25 hours).
+				("2026-03-29 12:00", "2026-03-28 23:00", "2026-03-29 22:00"),
+				("2026-10-25 12:00", "2026-10-24 22:00", "2026-10-25 23:00"),
+			],
+		);
+		// Cuba starts daylight-saving time at midnight, so March 8th begins at 01:00.
+		assert_windows(
+			&calendar(CalendarPeriod::Day, Some("America/Havana")),
+			&[
+				("2026-03-08 17:00", "2026-03-08 05:00", "2026-03-09 04:00"),
+				("2026-03-08 04:59", "2026-03-07 05:00", "2026-03-08 05:00"),
+			],
+		);
+	}
+
+	#[test]
+	fn windows_are_validated() {
+		let compile = |window: serde_json::Value| {
+			let keys: crate::http::apikey::LocalAPIKeys = serde_json::from_value(serde_json::json!({
+				"keys": [{
+					"key": "sk-budget",
+					"metadata": {"name": "budgeted-key"},
+					"budgets": [{
+						"name": "monthly",
+						"limit": {"unit": "USD", "amount": 10},
+						"window": window,
+						"onBudgetExceeded": "Block"
+					}]
+				}]
+			}))
+			.unwrap();
+			keys.compile().map(|_| ()).map_err(|err| format!("{err:#}"))
+		};
+		compile(serde_json::json!({"rolling": "30d"})).unwrap();
+		compile(serde_json::json!({"calendar": {"period": "Month"}})).unwrap();
+		compile(serde_json::json!({"calendar": {"period": "Week", "timeZone": "Asia/Tokyo"}})).unwrap();
+		assert!(
+			compile(serde_json::json!({"rolling": "0s"}))
+				.unwrap_err()
+				.contains("budget rolling windows must be greater than zero")
+		);
+		assert!(
+			compile(serde_json::json!({"calendar": {"period": "Month", "timeZone": "Mars/Olympus"}}))
+				.unwrap_err()
+				.contains("unknown budget time zone \"Mars/Olympus\"")
+		);
+
+		let window: BudgetWindow =
+			serde_json::from_value(serde_json::json!({"calendar": {"period": "Day"}})).unwrap();
+		assert_eq!(window, calendar(CalendarPeriod::Day, None));
+		let window: BudgetWindow =
+			serde_json::from_value(serde_json::json!({"rolling": "1h"})).unwrap();
+		assert_eq!(window, BudgetWindow::Rolling(Duration::from_secs(60 * 60)));
+		for invalid in [
+			serde_json::json!({"calendar": {"period": "Year"}}),
+			serde_json::json!({"rolling": "1h", "calendar": {"period": "Month"}}),
+			serde_json::json!({"calendar": {"period": "Month", "zone": "UTC"}}),
+		] {
+			assert!(serde_json::from_value::<BudgetWindow>(invalid).is_err());
+		}
+	}
+
+	#[test]
+	fn calendar_counters_reset_at_month_boundaries() {
+		let month = budget(calendar(CalendarPeriod::Month, None));
+		let mut counter =
+			BudgetCounter::configured("key", &month, utc("2028-02-29T23:59:59Z")).unwrap();
+		counter.amount = Decimal::from(7);
+		counter.refresh(utc("2028-02-29T23:59:59.999Z"));
+		assert_eq!(counter.amount, Decimal::from(7));
+		counter.refresh(utc("2028-03-01"));
+		assert_eq!(counter.amount, Decimal::ZERO);
+		assert_eq!(
+			(counter.window_start, counter.window_end),
+			(utc("2028-03-01"), utc("2028-04-01"))
+		);
+	}
+
+	#[test]
+	fn configure_keeps_usage_only_for_a_matching_window() {
+		let now = utc("2026-02-10 08:00");
+		// A counter preloaded from the database knows its bounds but not its definition.
+		let persisted = |start: &str, end: &str| BudgetCounter {
+			definition: None,
+			amount: Decimal::from(5),
+			pending: Decimal::ZERO,
+			unit: Some(BudgetLimitUnit::Tokens),
+			window: BudgetWindow::Rolling((utc(end) - utc(start)).to_std().unwrap()),
+			window_start: utc(start),
+			window_end: utc(end),
+			updated_at: now,
+		};
+		let configured = |mut counter: BudgetCounter, window: BudgetWindow| {
+			counter.configure("key", &budget(window), now).unwrap();
+			counter
+		};
+
+		let month = calendar(CalendarPeriod::Month, None);
+		let kept = configured(persisted("2026-02-01", "2026-03-01"), month.clone());
+		assert_eq!(kept.amount, Decimal::from(5));
+		assert_eq!(kept.window, month);
+
+		// A 28-day rolling window has the same length as February but different bounds.
+		let reset = configured(
+			persisted("2026-02-01", "2026-03-01"),
+			BudgetWindow::Rolling(Duration::from_secs(28 * 24 * 60 * 60)),
+		);
+		assert_eq!(reset.amount, Decimal::ZERO);
+
+		// The same month in another time zone is a different window.
+		let reset = configured(
+			persisted("2026-02-01", "2026-03-01"),
+			calendar(CalendarPeriod::Month, Some("Europe/Berlin")),
+		);
+		assert_eq!(reset.amount, Decimal::ZERO);
+		assert_eq!(reset.window_start, utc("2026-01-31 23:00"));
+
+		// `24h` and a UTC calendar day produce identical windows, so switching keeps usage.
+		let kept = configured(
+			persisted("2026-02-10", "2026-02-11"),
+			calendar(CalendarPeriod::Day, None),
+		);
+		assert_eq!(kept.amount, Decimal::from(5));
+	}
+
+	#[tokio::test]
+	async fn calendar_usage_replaces_the_previous_month_in_the_database() {
+		let pool = sqlx::sqlite::SqlitePoolOptions::new()
+			.max_connections(1)
+			.connect("sqlite::memory:")
+			.await
+			.unwrap();
+		let policy = Arc::new(BudgetPolicy::default());
+		policy
+			.initialize(crate::database::DatabasePool::Sqlite(pool.clone()))
+			.await
+			.unwrap();
+		let month = budget(calendar(CalendarPeriod::Month, None));
+		let now = Utc::now();
+		let mut counter = BudgetCounter::configured("key", &month, now).unwrap();
+		let (previous_start, previous_end) = budget_window(
+			counter.window_start - TimeDelta::milliseconds(1),
+			&month.window,
+		)
+		.unwrap();
+		assert_eq!(previous_end, counter.window_start);
+		sqlx::query(
+			"INSERT INTO budget_usage (budget_id, window_start, window_end, unit, used_amount, updated_at) VALUES ('calendar', ?, ?, 'Tokens', 50, ?)",
+		)
+		.bind(previous_start.timestamp_millis())
+		.bind(previous_end.timestamp_millis())
+		.bind(previous_start.timestamp_millis())
+		.execute(&pool)
+		.await
+		.unwrap();
+		counter.amount = Decimal::from(3);
+		counter.pending = Decimal::from(3);
+		policy
+			.counters
+			.insert("calendar".to_string(), counter.clone());
+		policy.flush().await.unwrap();
+
+		let (window_start, window_end, used) = sqlx::query_as::<_, (i64, i64, i64)>(
+			"SELECT window_start, window_end, used_amount FROM budget_usage WHERE budget_id = 'calendar'",
+		)
+		.fetch_one(&pool)
+		.await
+		.unwrap();
+		assert_eq!(
+			(window_start, window_end, used),
+			(
+				counter.window_start.timestamp_millis(),
+				counter.window_end.timestamp_millis(),
+				3
+			)
+		);
+		assert_eq!(
+			policy.counters.get("calendar").unwrap().amount,
+			Decimal::from(3)
+		);
+	}
+
+	#[test]
+	fn status_reports_the_calendar_window() {
+		let keys: crate::http::apikey::LocalAPIKeys = serde_json::from_value(serde_json::json!({
+			"keys": [{
+				"key": "sk-budget",
+				"metadata": {"name": "budgeted-key"},
+				"budgets": [{
+					"name": "monthly",
+					"limit": {"unit": "USD", "amount": 10},
+					"window": {"calendar": {"period": "Month"}},
+					"onBudgetExceeded": "Block"
+				}]
+			}]
+		}))
+		.unwrap();
+		let policy = BudgetPolicy::default();
+		policy.register(&keys.compile().unwrap(), true).unwrap();
+		let status = policy.status(None).unwrap();
+		let window = &status.budgets[0].window;
+		let start = UnixDate::from_timestamp_millis(window.start).unwrap();
+		let end = UnixDate::from_timestamp_millis(window.end).unwrap();
+		assert_eq!(
+			start.format("%d %H:%M:%S%.3f").to_string(),
+			"01 00:00:00.000"
+		);
+		assert_eq!(end.format("%d %H:%M:%S%.3f").to_string(), "01 00:00:00.000");
+		assert_eq!(window.duration_ms, window.end - window.start);
+		assert!((28..=31).contains(&(window.duration_ms / (24 * 60 * 60 * 1000))));
+	}
+
 	#[test]
 	fn budgets_require_a_database() {
 		let keys: crate::http::apikey::LocalAPIKeys = serde_json::from_value(serde_json::json!({
@@ -662,13 +1078,12 @@ CREATE TABLE budget_usage (
 				unit: BudgetLimitUnit::Tokens,
 				amount: BudgetAmount(Decimal::from(100)),
 			},
-			window: BudgetWindow {
-				rolling: Duration::from_secs(60 * 60),
-			},
+			window: BudgetWindow::Rolling(Duration::from_secs(60 * 60)),
 			on_budget_exceeded: BudgetExceededAction::Block,
 		};
 		let now = Utc::now();
-		let (window_start, window_end) = budget_window(now, Duration::from_secs(60 * 60)).unwrap();
+		let (window_start, window_end) =
+			budget_window(now, &BudgetWindow::Rolling(Duration::from_secs(60 * 60))).unwrap();
 		sqlx::query(
 			"INSERT INTO budget_usage (budget_id, window_start, window_end, unit, used_amount, updated_at) VALUES ('preloaded', ?, ?, 'Tokens', 9, ?), ('expired', 0, 1, 'Tokens', 8, 0)",
 		)
@@ -743,9 +1158,7 @@ CREATE TABLE budget_usage (
 				unit: BudgetLimitUnit::Usd,
 				amount: BudgetAmount(Decimal::ONE),
 			},
-			window: BudgetWindow {
-				rolling: Duration::from_secs(60 * 60),
-			},
+			window: BudgetWindow::Rolling(Duration::from_secs(60 * 60)),
 			on_budget_exceeded: BudgetExceededAction::Block,
 		};
 		let mut expired_residue = BudgetCounter::configured("key", &usd_budget, now).unwrap();
