@@ -14,8 +14,11 @@ use crate::cel::LLMContext;
 use crate::{apply, schema_de, serde_dur};
 
 mod database;
+mod metrics;
 mod status;
 
+pub(crate) use metrics::BudgetMetricValue;
+pub use metrics::BudgetMetrics;
 pub use status::{
 	BudgetStatus, BudgetStatusLimit, BudgetStatusResponse, BudgetStatusUsage, BudgetStatusWindow,
 };
@@ -35,6 +38,9 @@ struct BudgetCounter {
 	window_start: UnixDate,
 	window_end: UnixDate,
 	updated_at: UnixDate,
+	/// Requests checked while this budget was exhausted. Process-local and never reset by window
+	/// changes, so it is exported as a monotonic counter.
+	exceeded_requests: u64,
 }
 
 impl BudgetCounter {
@@ -53,6 +59,7 @@ impl BudgetCounter {
 			window_start,
 			window_end,
 			updated_at: now,
+			exceeded_requests: 0,
 		})
 	}
 
@@ -531,15 +538,16 @@ impl BudgetPolicy {
 		let mut blocked = None;
 		for budget in &budgets.budgets {
 			let budget_id = budget_id(&budgets.api_key_id, budget);
-			let (used, window_end) = {
+			let (used, window_end, exceeded) = {
 				let mut counter = self
 					.counters
 					.get_mut(&budget_id)
 					.context("budget counter was not registered")?;
 				counter.refresh(now);
-				(counter.amount, counter.window_end)
+				let exceeded = counter.amount >= budget.limit.amount.decimal();
+				counter.exceeded_requests += u64::from(exceeded);
+				(counter.amount, counter.window_end, exceeded)
 			};
-			let exceeded = used >= budget.limit.amount.decimal();
 			if exceeded {
 				tracing::warn!(
 					target: "budget",

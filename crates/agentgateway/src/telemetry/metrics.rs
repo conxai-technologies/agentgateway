@@ -17,6 +17,7 @@ use prometheus_client::registry::{Metric, Unit};
 use tracing::{debug, trace};
 
 use crate::HistogramMode;
+use crate::http::budget::{BudgetMetricValue, BudgetMetrics};
 use crate::http::substrate::ateattr::{ResumeDisposition, RouteOutcome};
 use crate::mcp::MCPOperation;
 use crate::proxy::ProxyResponseReason;
@@ -332,6 +333,9 @@ pub struct Metrics {
 
 	pub cost_catalog_lookups: Family<CostCatalogLookupLabels, counter::Counter>,
 
+	// API key budget state, read from the attached budget policy at scrape time
+	pub budgets: BudgetMetrics,
+
 	// metrics for request retries
 	pub retries: Counter,
 	pub retries_budget_exhausted: Counter,
@@ -495,6 +499,43 @@ impl Metrics {
 					"cost_catalog_lookups",
 					"Total number of model cost catalog lookups by resolution status",
 					m.clone(),
+				);
+				m
+			},
+			budgets: {
+				let m = BudgetMetrics::default();
+				registry.register(
+					"budget_limit",
+					"Configured limit of an API key budget, in the budget unit",
+					m.metric(BudgetMetricValue::Limit),
+				);
+				registry.register(
+					"budget_used",
+					"Usage charged to an API key budget in its current window, in the budget unit",
+					m.metric(BudgetMetricValue::Used),
+				);
+				registry.register_with_unit(
+					"budget_utilization",
+					"Fraction of an API key budget used in its current window; 1 or more means exhausted",
+					Unit::Other("ratio".to_string()),
+					m.metric(BudgetMetricValue::Utilization),
+				);
+				registry.register_with_unit(
+					"budget_window_start_timestamp",
+					"Start of an API key budget's current window as a Unix timestamp",
+					Unit::Seconds,
+					m.metric(BudgetMetricValue::WindowStart),
+				);
+				registry.register_with_unit(
+					"budget_window_end_timestamp",
+					"End of an API key budget's current window as a Unix timestamp",
+					Unit::Seconds,
+					m.metric(BudgetMetricValue::WindowEnd),
+				);
+				registry.register(
+					"budget_exceeded_requests",
+					"Total requests checked while an API key budget was exhausted; requests counted with action=\"Block\" were rejected",
+					m.metric(BudgetMetricValue::ExceededRequests),
 				);
 				m
 			},

@@ -95,6 +95,7 @@ pub async fn run_with_ui_assets(
 		config.metrics.excluded_metrics.clone(),
 		config.histograms,
 	));
+	metrics_handle.budgets.attach(&config.budget_policy);
 	let client = client::Client::new_with_h2_config(
 		&config.dns,
 		pool,
