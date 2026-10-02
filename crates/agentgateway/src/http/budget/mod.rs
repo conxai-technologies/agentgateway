@@ -244,7 +244,6 @@ pub struct CalendarWindow {
 	pub period: CalendarPeriod,
 	/// IANA time zone in which period boundaries are computed, for example `Europe/Berlin`.
 	/// Defaults to `UTC`. In zones with daylight-saving time a day can be 23 or 25 hours long.
-	#[serde(default)]
 	pub time_zone: Option<String>,
 }
 
