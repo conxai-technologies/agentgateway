@@ -1157,6 +1157,9 @@
         },
         "invalid": {
           "type": "boolean"
+        },
+        "virtualModel": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -1182,6 +1185,9 @@
           ]
         },
         "invalid": {
+          "type": "boolean"
+        },
+        "virtualModel": {
           "type": "boolean"
         }
       },

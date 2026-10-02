@@ -12078,7 +12078,7 @@
           }
         },
         "virtualModels": {
-          "description": "virtualModels defines a set of models that can be served from the gateway. The model name refers to the\nmodel in the users request that is matched. However, unlike the `models` field, virtual models will\ndynamically route to a specific model (configured in `models`) based on the configured logic.",
+          "description": "virtualModels defines a set of models that can be served from the gateway. The model name refers to the\nmodel in the users request that is matched. However, unlike the `models` field, virtual models will\ndynamically route to a specific model (configured in `models`) based on the configured logic.\nA target may also name another virtual model, up to 4 virtual models deep; cycles are rejected.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/LocalLLMVirtualModel"
@@ -12803,7 +12803,7 @@
       "type": "object",
       "properties": {
         "model": {
-          "description": "model is resolved against llm.models using the same wildcard matching as client requests.",
+          "description": "model names another virtual model, or is resolved against llm.models using the same wildcard\nmatching as client requests.",
           "type": "string"
         },
         "weight": {
@@ -12839,7 +12839,7 @@
       "type": "object",
       "properties": {
         "model": {
-          "description": "model is resolved against llm.models using the same wildcard matching as client requests.",
+          "description": "model names another failover virtual model, whose priority groups are merged into this target's\npriority, or is resolved against llm.models using the same wildcard matching as client requests.",
           "type": "string"
         },
         "priority": {
@@ -12887,7 +12887,7 @@
           "default": null
         },
         "model": {
-          "description": "model is resolved against llm.models using the same wildcard matching as client requests.",
+          "description": "model names another virtual model, or is resolved against llm.models using the same wildcard\nmatching as client requests.",
           "type": "string"
         }
       },

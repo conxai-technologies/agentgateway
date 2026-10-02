@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
+use itertools::Itertools;
 use secrecy::SecretString;
 
 use crate::llm::{AIProvider, NamedAIProvider};
@@ -987,6 +988,289 @@ llm:
 			.iter()
 			.any(|route| route.key.contains("virtual-model")),
 		"virtual model routing should not generate HTTP routes"
+	);
+}
+
+/// Returns the sorted provider names of each priority group of the named AI backend.
+fn ai_backend_priority_groups(normalized: &NormalizedLocalConfig, name: &str) -> Vec<Vec<String>> {
+	let normalized = serde_json::to_value(normalized).expect("normalized config serializes");
+	let backend = normalized["backends"]
+		.as_array()
+		.expect("backends")
+		.iter()
+		.find(|backend| backend["backend"]["ai"]["name"] == name)
+		.unwrap_or_else(|| panic!("missing AI backend {name}"));
+	backend["backend"]["ai"]["target"]["providers"]
+		.as_array()
+		.expect("provider groups")
+		.iter()
+		.map(|group| {
+			group["active"]
+				.as_object()
+				.expect("active providers")
+				.keys()
+				.cloned()
+				.sorted()
+				.collect()
+		})
+		.collect()
+}
+
+fn llm_router_virtual_models(normalized: &NormalizedLocalConfig) -> serde_json::Value {
+	let normalized = serde_json::to_value(normalized).expect("normalized config serializes");
+	normalized["backends"]
+		.as_array()
+		.expect("backends")
+		.iter()
+		.find_map(|backend| backend["backend"].get("llmRouter"))
+		.expect("LLM router backend")["target"]["virtualModels"]
+		.clone()
+}
+
+#[tokio::test]
+async fn test_llm_nested_conditional_virtual_model_targets_failover_groups() {
+	let normalized = normalize_test_config(
+		r#"
+llm:
+  models:
+  - name: vertex-eu
+    provider: openAI
+  - name: bedrock-eu
+    provider: openAI
+  - name: vertex-global
+    provider: openAI
+  - name: bedrock-global
+    provider: openAI
+  virtualModels:
+  - name: assistant
+    routing:
+      conditional:
+        targets:
+        - when: request.headers["x-data-residency"] == "eu"
+          model: assistant-eu
+        - model: assistant-global
+  - name: assistant-eu
+    routing:
+      failover:
+        targets:
+        - model: vertex-eu
+          priority: 0
+        - model: bedrock-eu
+          priority: 1
+  - name: assistant-global
+    routing:
+      failover:
+        targets:
+        - model: vertex-global
+          priority: 0
+        - model: bedrock-global
+          priority: 1
+"#,
+	)
+	.await
+	.expect("conditional virtual model may target failover virtual models");
+
+	let virtual_models = llm_router_virtual_models(&normalized);
+	let targets = virtual_models[0]["routing"]["conditional"]
+		.as_array()
+		.expect("conditional targets");
+	assert_eq!(targets.len(), 2);
+	for (target, model) in targets.iter().zip(["assistant-eu", "assistant-global"]) {
+		assert_eq!(target["model"], model);
+		assert_eq!(target["virtualModel"], true, "{target}");
+	}
+	assert_eq!(
+		ai_backend_priority_groups(&normalized, "llm:virtual-model:assistant-eu:1"),
+		vec![vec!["vertex-eu"], vec!["bedrock-eu"]]
+	);
+	assert_eq!(
+		ai_backend_priority_groups(&normalized, "llm:virtual-model:assistant-global:2"),
+		vec![vec!["vertex-global"], vec!["bedrock-global"]]
+	);
+}
+
+#[tokio::test]
+async fn test_llm_nested_failover_virtual_model_is_flattened() {
+	let normalized = normalize_test_config(
+		r#"
+llm:
+  models:
+  - name: a
+    provider: openAI
+  - name: b
+    provider: openAI
+  - name: c
+    provider: openAI
+  - name: d
+    provider: openAI
+  virtualModels:
+  - name: regional
+    routing:
+      failover:
+        targets:
+        - model: b
+          priority: 0
+        - model: c
+          priority: 1
+  - name: outer
+    routing:
+      failover:
+        targets:
+        - model: a
+          priority: 0
+        - model: regional
+          priority: 0
+        - model: d
+          priority: 1
+  - name: overlapping
+    routing:
+      failover:
+        targets:
+        - model: b
+          priority: 0
+        - model: regional
+          priority: 1
+"#,
+	)
+	.await
+	.expect("failover virtual model may target failover virtual models");
+
+	assert_eq!(
+		ai_backend_priority_groups(&normalized, "llm:virtual-model:outer:1"),
+		vec![vec!["a", "b"], vec!["c"], vec!["d"]]
+	);
+	// b is already reached at priority 0, so the nested group only adds c.
+	assert_eq!(
+		ai_backend_priority_groups(&normalized, "llm:virtual-model:overlapping:2"),
+		vec![vec!["b"], vec!["c"]]
+	);
+}
+
+#[tokio::test]
+async fn test_llm_virtual_model_self_target_uses_concrete_model() {
+	let normalized = normalize_test_config(
+		r#"
+llm:
+  models:
+  - name: "*"
+    provider: openAI
+  virtualModels:
+  - name: gpt-5
+    routing:
+      conditional:
+        targets:
+        - when: request.headers["x-tier"] == "economy"
+          model: gpt-5-mini
+        - model: gpt-5
+"#,
+	)
+	.await
+	.expect("a virtual model may shadow the concrete model it targets");
+
+	let virtual_models = llm_router_virtual_models(&normalized);
+	for target in virtual_models[0]["routing"]["conditional"]
+		.as_array()
+		.expect("conditional targets")
+	{
+		assert!(target.get("virtualModel").is_none(), "{target}");
+	}
+}
+
+#[tokio::test]
+async fn test_llm_virtual_model_rejects_cycle() {
+	let err = normalize_test_config(
+		r#"
+llm:
+  models:
+  - name: concrete
+    provider: openAI
+  virtualModels:
+  - name: a
+    routing:
+      weighted:
+        targets:
+        - model: b
+  - name: b
+    routing:
+      conditional:
+        targets:
+        - when: request.headers["x-loop"] == "true"
+          model: a
+        - model: concrete
+"#,
+	)
+	.await
+	.expect_err("virtual model cycle should fail");
+	assert!(
+		err
+			.to_string()
+			.contains("virtual model cycle detected: a -> b -> a"),
+		"{err:?}"
+	);
+}
+
+#[tokio::test]
+async fn test_llm_virtual_model_rejects_excessive_nesting() {
+	let config = |depth: usize| {
+		let mut config =
+			String::from("llm:\n  models:\n  - name: concrete\n    provider: openAI\n  virtualModels:\n");
+		for idx in 0..depth {
+			let target = if idx + 1 == depth {
+				"concrete".to_string()
+			} else {
+				format!("v{}", idx + 1)
+			};
+			config.push_str(&format!(
+				"  - name: v{idx}\n    routing:\n      weighted:\n        targets:\n        - model: {target}\n"
+			));
+		}
+		config
+	};
+	let max = llm::model_router::MAX_VIRTUAL_MODEL_DEPTH;
+	normalize_test_config(&config(max))
+		.await
+		.expect("nesting up to the maximum depth is allowed");
+	let err = normalize_test_config(&config(max + 1))
+		.await
+		.expect_err("nesting beyond the maximum depth should fail");
+	let chain = (0..=max).map(|idx| format!("v{idx}")).join(" -> ");
+	assert!(
+		err.to_string().contains(&format!(
+			"virtual model chain {chain} exceeds the maximum nesting depth of {max}"
+		)),
+		"{err:?}"
+	);
+}
+
+#[tokio::test]
+async fn test_llm_failover_virtual_model_rejects_conditional_target() {
+	let err = normalize_test_config(
+		r#"
+llm:
+  models:
+  - name: concrete
+    provider: openAI
+  virtualModels:
+  - name: picker
+    routing:
+      conditional:
+        targets:
+        - model: concrete
+  - name: resilient
+    routing:
+      failover:
+        targets:
+        - model: picker
+          priority: 0
+"#,
+	)
+	.await
+	.expect_err("failover cannot target a conditional virtual model");
+	assert!(
+		err.to_string().contains(
+			"virtual model resilient failover target picker must be an llm.models entry or a failover virtual model"
+		),
+		"{err:?}"
 	);
 }
 
