@@ -20,12 +20,14 @@ import type { SchemaHelp } from '@/schemaHelp';
 
 type FailureMode = 'failClosed' | 'failOpen';
 type DescriptorType = 'requests' | 'tokens';
+type DescriptorOnError = 'drop' | 'skip' | 'error';
 
 type DescriptorDraft = {
 	entries: Array<{ key: string; value: string }>;
 	type: DescriptorType;
 	cost: string;
 	limitOverride: string;
+	onError: DescriptorOnError;
 };
 
 export function RemoteRateLimitPolicyEditor(props: {
@@ -95,7 +97,8 @@ export function RemoteRateLimitPolicyEditor(props: {
 					entries: descriptor.entries,
 					type: descriptor.type === 'requests' ? undefined : descriptor.type,
 					cost: descriptor.cost.trim() || undefined,
-					limitOverride: descriptor.limitOverride.trim() || undefined
+					limitOverride: descriptor.limitOverride.trim() || undefined,
+					onError: descriptor.onError === 'drop' ? undefined : descriptor.onError
 				})
 			),
 			failureMode: failureMode === 'failClosed' ? undefined : failureMode
@@ -210,7 +213,8 @@ export function RemoteRateLimitPolicyEditor(props: {
 							entries: descriptor.entries,
 							type: descriptor.type === 'requests' ? undefined : descriptor.type,
 							cost: descriptor.cost.trim() || undefined,
-							limitOverride: descriptor.limitOverride.trim() || undefined
+							limitOverride: descriptor.limitOverride.trim() || undefined,
+							onError: descriptor.onError === 'drop' ? undefined : descriptor.onError
 						})
 					),
 					failureMode: failureMode === 'failClosed' ? undefined : failureMode
@@ -276,6 +280,33 @@ function DescriptorEditor(props: {
 						}
 					]}
 					onChange={type => props.onChange({ ...props.descriptor, type })}
+				/>
+			</FieldGroup>
+			<FieldGroup
+				label="On error"
+				tooltip={props.help.field<DescriptorEntry>('DescriptorEntry', 'onError')}
+			>
+				<EnumSelector<DescriptorOnError>
+					ariaLabel={`Descriptor ${props.index + 1} on error`}
+					value={props.descriptor.onError}
+					options={[
+						{
+							value: 'drop',
+							label: 'Drop',
+							description: 'Leave the descriptor out when one of its expressions fails.'
+						},
+						{
+							value: 'skip',
+							label: 'Skip',
+							description: 'Ignore only the failed expression and send the rest.'
+						},
+						{
+							value: 'error',
+							label: 'Error',
+							description: 'Reject the request when one of its expressions fails.'
+						}
+					]}
+					onChange={onError => props.onChange({ ...props.descriptor, onError })}
 				/>
 			</FieldGroup>
 			<FieldGroup
@@ -375,7 +406,8 @@ function descriptorDrafts(value: RemoteRateLimitDraft | null | undefined): Descr
 					: [{ key: '', value: '' }],
 				type: descriptor.type ?? 'requests',
 				cost: descriptor.cost ?? '',
-				limitOverride: descriptor.limitOverride ?? ''
+				limitOverride: descriptor.limitOverride ?? '',
+				onError: descriptor.onError ?? 'drop'
 			}))
 		: [emptyDescriptor()];
 }
@@ -385,7 +417,8 @@ function emptyDescriptor(): DescriptorDraft {
 		entries: [{ key: 'user', value: 'request.headers["x-user"]' }],
 		type: 'requests',
 		cost: '',
-		limitOverride: ''
+		limitOverride: '',
+		onError: 'drop'
 	};
 }
 

@@ -35,6 +35,7 @@ fn make_descriptor_entry(entries: Vec<(&str, &str)>, limit_type: RateLimitType) 
 		limit_type,
 		cost: None,
 		limit_override: None,
+		on_error: OnError::default(),
 	}
 }
 
@@ -56,7 +57,9 @@ fn build_request_all_descriptors_evaluate_returns_some() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_some(),
 		"expected Some when all descriptors evaluate"
@@ -87,7 +90,9 @@ fn build_request_header_descriptor_evaluates() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(result.is_some());
 	let request = result.unwrap().0;
 	assert_eq!(request.descriptors[0].entries[0].value, "my-client");
@@ -110,7 +115,9 @@ fn build_request_missing_header_returns_none() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None when descriptor evaluation fails"
@@ -135,7 +142,9 @@ fn build_request_second_descriptor_fails_sends_successful_only() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_some(),
 		"expected Some with the successful descriptor when only one fails"
@@ -168,7 +177,9 @@ fn build_request_first_descriptor_fails_sends_successful_only() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_some(),
 		"expected Some with the successful descriptor when only the first fails"
@@ -199,7 +210,9 @@ fn build_request_no_matching_type_returns_none() {
 		.unwrap();
 
 	// Ask for Requests type -- no candidates
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None when no candidates match the requested type"
@@ -220,6 +233,7 @@ fn build_request_cost_propagated_to_hits_addend() {
 
 	let result = rl
 		.build_request(&req, RateLimitType::Tokens, Some(42))
+		.unwrap()
 		.unwrap()
 		.0;
 	assert_eq!(result.descriptors[0].hits_addend, Some(42));
@@ -245,13 +259,19 @@ fn amend_tokens_keeps_descriptor_costs_aligned_when_dropping_descriptor() {
 		hits_addend: 0,
 	};
 	let descriptor_costs = vec![
-		Some(Arc::new(
-			cel::Expression::new_strict("missingField").expect("valid CEL expression"),
-		)),
-		Some(Arc::new(
-			cel::Expression::new_strict("uint(7)").expect("valid CEL expression"),
-		)),
-		None,
+		(
+			Some(Arc::new(
+				cel::Expression::new_strict("missingField").expect("valid CEL expression"),
+			)),
+			OnError::Drop,
+		),
+		(
+			Some(Arc::new(
+				cel::Expression::new_strict("uint(7)").expect("valid CEL expression"),
+			)),
+			OnError::Drop,
+		),
+		(None, OnError::Drop),
 	];
 	let exec = cel::Executor::new_empty();
 
@@ -282,6 +302,7 @@ fn build_request_limit_override_evaluates() {
 	let result = rl
 		.build_request(&req, RateLimitType::Requests, None)
 		.unwrap()
+		.unwrap()
 		.0;
 	let limit = result.descriptors[0]
 		.limit
@@ -311,7 +332,9 @@ fn build_request_delete_disconnect_skips_ratelimit() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None for DELETE disconnect with missing descriptor headers"
@@ -333,7 +356,9 @@ fn build_request_multiple_entries_all_succeed() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(result.is_some());
 	let request = result.unwrap().0;
 	assert_eq!(request.descriptors.len(), 3);
@@ -358,7 +383,9 @@ fn build_request_tokens_type_missing_header_returns_none() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Tokens, Some(100));
+	let result = rl
+		.build_request(&req, RateLimitType::Tokens, Some(100))
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None for Tokens type when descriptor fails"
@@ -377,7 +404,9 @@ fn build_request_tokens_type_all_succeed() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Tokens, Some(50));
+	let result = rl
+		.build_request(&req, RateLimitType::Tokens, Some(50))
+		.unwrap();
 	assert!(result.is_some());
 	let request = result.unwrap().0;
 	assert_eq!(request.descriptors.len(), 1);
@@ -405,7 +434,9 @@ fn build_request_all_descriptors_fail_returns_none() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None when all descriptor entries fail evaluation"
@@ -459,7 +490,9 @@ fn build_request_two_descriptors_multi_entry_all_succeed() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(result.is_some());
 	let request = result.unwrap().0;
 	assert_eq!(request.descriptors.len(), 2);
@@ -504,7 +537,9 @@ fn build_request_two_descriptors_first_partially_fails_sends_second() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_some(),
 		"expected Some — second descriptor should still be sent"
@@ -548,7 +583,9 @@ fn build_request_two_descriptors_both_partially_fail_returns_none() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None when all descriptors have at least one failing entry"
@@ -570,7 +607,9 @@ fn build_request_non_string_cel_result_returns_none() {
 		.body(crate::http::Body::empty())
 		.unwrap();
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_none(),
 		"expected None when CEL result is not string-convertible"
@@ -952,7 +991,9 @@ fn build_request_jwt_sub_descriptor_evaluates_with_materialization() {
 		jwt: Default::default(),
 	});
 
-	let result = rl.build_request(&req, RateLimitType::Requests, None);
+	let result = rl
+		.build_request(&req, RateLimitType::Requests, None)
+		.unwrap();
 	assert!(
 		result.is_some(),
 		"expected Some when jwt.sub evaluates (with materialization) to a string"
@@ -962,4 +1003,282 @@ fn build_request_jwt_sub_descriptor_evaluates_with_materialization() {
 	assert_eq!(request.descriptors[0].entries.len(), 1);
 	assert_eq!(request.descriptors[0].entries[0].key, "user");
 	assert_eq!(request.descriptors[0].entries[0].value, "rate-limit-user");
+}
+
+// --- onError tests ---
+
+fn post_request() -> crate::http::Request {
+	::http::Request::builder()
+		.method(::http::Method::POST)
+		.uri("http://example.com/mcp")
+		.body(crate::http::Body::empty())
+		.unwrap()
+}
+
+fn descriptor_with(
+	entries: Vec<(&str, &str)>,
+	limit_type: RateLimitType,
+	on_error: OnError,
+) -> DescriptorEntry {
+	let mut entry = make_descriptor_entry(entries, limit_type);
+	entry.on_error = on_error;
+	entry
+}
+
+fn expr(e: &str) -> Option<Arc<cel::Expression>> {
+	Some(Arc::new(
+		cel::Expression::new_strict(e).expect("valid CEL expression"),
+	))
+}
+
+/// An additive policy: a shared descriptor evaluates, but the per-user one cannot. With
+/// `onError: error` the request is rejected instead of being charged to the shared budget only.
+#[test]
+fn on_error_error_rejects_when_one_of_several_descriptors_fails() {
+	let rl = make_rate_limit(vec![
+		descriptor_with(
+			vec![("scope", r#""shared""#)],
+			RateLimitType::Requests,
+			OnError::Error,
+		),
+		descriptor_with(
+			vec![("user", r#"request.headers["x-user"]"#)],
+			RateLimitType::Requests,
+			OnError::Error,
+		),
+	]);
+
+	let result = rl.build_request(&post_request(), RateLimitType::Requests, None);
+	assert!(
+		matches!(result, Err(ProxyError::RateLimitFailed)),
+		"expected the request to be rejected, got {result:?}"
+	);
+}
+
+#[test]
+fn on_error_error_rejects_when_all_descriptors_fail() {
+	let rl = make_rate_limit(vec![
+		descriptor_with(
+			vec![("client", r#"request.headers["x-missing-1"]"#)],
+			RateLimitType::Requests,
+			OnError::Error,
+		),
+		descriptor_with(
+			vec![("user", r#"request.headers["x-missing-2"]"#)],
+			RateLimitType::Requests,
+			OnError::Error,
+		),
+	]);
+
+	let result = rl.build_request(&post_request(), RateLimitType::Requests, None);
+	assert!(matches!(result, Err(ProxyError::RateLimitFailed)));
+}
+
+/// A failing `error` descriptor of another limit type does not apply to this check.
+#[test]
+fn on_error_error_ignores_descriptors_of_another_type() {
+	let rl = make_rate_limit(vec![
+		descriptor_with(
+			vec![("user", r#""test-user""#)],
+			RateLimitType::Requests,
+			OnError::Error,
+		),
+		descriptor_with(
+			vec![("user", r#"request.headers["x-missing"]"#)],
+			RateLimitType::Tokens,
+			OnError::Error,
+		),
+	]);
+
+	let request = rl
+		.build_request(&post_request(), RateLimitType::Requests, None)
+		.unwrap()
+		.expect("the requests descriptor should be sent")
+		.0;
+	assert_eq!(request.descriptors.len(), 1);
+	assert_eq!(request.descriptors[0].entries[0].value, "test-user");
+
+	let result = rl.build_request(&post_request(), RateLimitType::Tokens, Some(10));
+	assert!(matches!(result, Err(ProxyError::RateLimitFailed)));
+}
+
+/// `error` applies per descriptor: a failing `drop` descriptor next to it is still dropped.
+#[test]
+fn on_error_is_per_descriptor() {
+	let rl = make_rate_limit(vec![
+		descriptor_with(
+			vec![("user", r#""test-user""#)],
+			RateLimitType::Requests,
+			OnError::Error,
+		),
+		descriptor_with(
+			vec![("tool", r#"request.headers["x-tool"]"#)],
+			RateLimitType::Requests,
+			OnError::Drop,
+		),
+	]);
+
+	let request = rl
+		.build_request(&post_request(), RateLimitType::Requests, None)
+		.unwrap()
+		.expect("the user descriptor should be sent")
+		.0;
+	assert_eq!(request.descriptors.len(), 1);
+	assert_eq!(request.descriptors[0].entries[0].key, "user");
+}
+
+#[test]
+fn on_error_error_rejects_on_cost_and_limit_override_failures() {
+	let mut cost = descriptor_with(
+		vec![("user", r#""test-user""#)],
+		RateLimitType::Requests,
+		OnError::Error,
+	);
+	cost.cost = expr(r#"request.headers["x-cost"]"#);
+	let result =
+		make_rate_limit(vec![cost]).build_request(&post_request(), RateLimitType::Requests, None);
+	assert!(matches!(result, Err(ProxyError::RateLimitFailed)));
+
+	let mut limit = descriptor_with(
+		vec![("user", r#""test-user""#)],
+		RateLimitType::Requests,
+		OnError::Error,
+	);
+	limit.limit_override = expr(r#"{"unit":"fortnight","requestsPerUnit":5}"#);
+	let result =
+		make_rate_limit(vec![limit]).build_request(&post_request(), RateLimitType::Requests, None);
+	assert!(matches!(result, Err(ProxyError::RateLimitFailed)));
+}
+
+#[test]
+fn on_error_error_rejects_non_string_entry() {
+	let rl = make_rate_limit(vec![descriptor_with(
+		vec![("data", r#"{"a": "b"}"#)],
+		RateLimitType::Requests,
+		OnError::Error,
+	)]);
+	let result = rl.build_request(&post_request(), RateLimitType::Requests, None);
+	assert!(matches!(result, Err(ProxyError::RateLimitFailed)));
+}
+
+/// `skip` leaves out only the failed entry, like Envoy's `skip_if_error`.
+#[test]
+fn on_error_skip_leaves_out_failed_entries() {
+	let rl = make_rate_limit(vec![descriptor_with(
+		vec![
+			("user", r#""test-user""#),
+			("tool", r#"request.headers["x-tool"]"#),
+		],
+		RateLimitType::Requests,
+		OnError::Skip,
+	)]);
+
+	let request = rl
+		.build_request(&post_request(), RateLimitType::Requests, None)
+		.unwrap()
+		.expect("the descriptor should be sent without the failed entry")
+		.0;
+	assert_eq!(request.descriptors.len(), 1);
+	assert_eq!(request.descriptors[0].entries.len(), 1);
+	assert_eq!(request.descriptors[0].entries[0].key, "user");
+}
+
+#[test]
+fn on_error_skip_drops_descriptor_without_entries() {
+	let rl = make_rate_limit(vec![descriptor_with(
+		vec![("tool", r#"request.headers["x-tool"]"#)],
+		RateLimitType::Requests,
+		OnError::Skip,
+	)]);
+
+	let result = rl
+		.build_request(&post_request(), RateLimitType::Requests, None)
+		.unwrap();
+	assert!(result.is_none());
+}
+
+#[test]
+fn on_error_skip_ignores_failed_cost_and_limit_override() {
+	let mut entry = descriptor_with(
+		vec![("user", r#""test-user""#)],
+		RateLimitType::Requests,
+		OnError::Skip,
+	);
+	entry.cost = expr(r#"request.headers["x-cost"]"#);
+	entry.limit_override = expr(r#"{"unit":"fortnight","requestsPerUnit":5}"#);
+	let rl = make_rate_limit(vec![entry]);
+
+	let request = rl
+		.build_request(&post_request(), RateLimitType::Requests, None)
+		.unwrap()
+		.expect("the descriptor should be sent")
+		.0;
+	assert_eq!(request.descriptors.len(), 1);
+	assert_eq!(request.descriptors[0].hits_addend, None);
+	assert!(request.descriptors[0].limit.is_none());
+}
+
+/// After the response, `skip` falls back to the default token count; `drop` and `error` can only
+/// drop the descriptor.
+#[test]
+fn amend_tokens_honours_on_error() {
+	let descriptor = |value: &str| proto::RateLimitDescriptor {
+		entries: vec![proto::rate_limit_descriptor::Entry {
+			key: "user".to_string(),
+			value: value.to_string(),
+		}],
+		limit: None,
+		hits_addend: Some(0),
+	};
+	let mut request = proto::RateLimitRequest {
+		domain: "test-domain".to_string(),
+		descriptors: vec![descriptor("drop"), descriptor("skip"), descriptor("error")],
+		hits_addend: 0,
+	};
+	let descriptor_costs = vec![
+		(expr("missingField"), OnError::Drop),
+		(expr("missingField"), OnError::Skip),
+		(expr("missingField"), OnError::Error),
+	];
+	let exec = cel::Executor::new_empty();
+
+	LLMResponseAmend::apply_token_amend(&mut request, &descriptor_costs, 11, &exec);
+
+	assert_eq!(request.descriptors.len(), 1);
+	assert_eq!(request.descriptors[0].entries[0].value, "skip");
+	assert_eq!(request.descriptors[0].hits_addend, Some(11));
+}
+
+#[test]
+fn config_on_error_deserializes() {
+	let yaml = r#"
+domain: "test"
+host: "127.0.0.1:8081"
+descriptors:
+  - entries:
+      - key: "scope"
+        value: '"shared"'
+  - entries:
+      - key: "user"
+        value: 'jwt.sub'
+    onError: error
+  - entries:
+      - key: "tool"
+        value: 'request.headers["x-tool"]'
+    onError: skip
+"#;
+	let rrl: RemoteRateLimit = serde_norway::from_str(yaml).unwrap();
+	let modes: Vec<_> = rrl.descriptors.0.iter().map(|d| d.on_error).collect();
+	assert_eq!(modes, vec![OnError::Drop, OnError::Error, OnError::Skip]);
+
+	let invalid = r#"
+domain: "test"
+host: "127.0.0.1:8081"
+descriptors:
+  - entries:
+      - key: "user"
+        value: 'jwt.sub'
+    onError: deny
+"#;
+	assert!(serde_norway::from_str::<RemoteRateLimit>(invalid).is_err());
 }

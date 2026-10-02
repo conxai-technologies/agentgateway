@@ -48,6 +48,28 @@ pub enum FailureMode {
 	FailOpen,
 }
 
+/// Defines what happens to a descriptor when one of its expressions (an entry value, `cost`, or
+/// `limitOverride`) fails to evaluate or returns a value of the wrong type, for example because
+/// the request lacks a header the descriptor reads.
+#[apply(schema!)]
+#[cfg_attr(feature = "schema", schemars(rename = "RemoteRateLimitOnError"))]
+#[derive(Default, Copy, PartialEq, Eq)]
+pub enum OnError {
+	/// Drop the whole descriptor and send the remaining ones (default). If no descriptor remains,
+	/// the rate limit service is not called and the request is allowed.
+	#[default]
+	Drop,
+	/// Ignore only the expression that failed: a failed entry is left out of the descriptor, a
+	/// failed `cost` falls back to the default cost, and a failed `limitOverride` is not sent.
+	/// A descriptor left without entries is dropped.
+	Skip,
+	/// Reject the request with a 500 status, as when the rate limit service fails under
+	/// `failClosed`. Use this when the descriptor enforces a limit that must not be bypassed.
+	/// `tokens` costs evaluated after the response can no longer reject the request; there the
+	/// descriptor is dropped.
+	Error,
+}
+
 #[apply(schema!)]
 pub struct RemoteRateLimit {
 	/// Rate limit domain sent to the remote rate limit service.
@@ -82,7 +104,7 @@ pub struct DescriptorEntry {
 	pub limit_type: RateLimitType,
 	/// cost determines the optional expression to determine the cost of the request.
 	/// If unset, type `requests` defaults to `1`, and type `tokens` defaults to `llm.totalTokens`.
-	/// If the expression fails to evaluate, the descriptor is skipped.
+	/// If the expression fails to evaluate, `onError` decides what happens.
 	/// Costs for type `requests` are evaluated during request processing. Costs for type `tokens`
 	/// are evaluated upon request completion.
 	pub cost: Option<Arc<cel::Expression>>,
@@ -92,8 +114,13 @@ pub struct DescriptorEntry {
 	/// The expression must evaluate to a map with `unit` and `requestsPerUnit` keys. For example:
 	/// `{"unit":"second","requestsPerUnit":100}`.
 	/// Valid units: second, minute, hour, day, month, year
-	/// If the expression fails to evaluate, the descriptor is skipped.
+	/// If the expression fails to evaluate, `onError` decides what happens.
 	pub limit_override: Option<Arc<cel::Expression>>,
+	/// What to do when an expression of this descriptor fails to evaluate.
+	/// Defaults to `drop`, which leaves the descriptor out of the check. Use `error` to reject
+	/// the request instead, so a missing attribute cannot bypass the limit.
+	#[serde(default)]
+	pub on_error: OnError,
 }
 
 #[derive(serde::Deserialize)]
@@ -131,8 +158,11 @@ pub struct LLMResponseAmend {
 	base: RemoteRateLimit,
 	client: PolicyClient,
 	request: proto::RateLimitRequest,
-	descriptor_costs: Vec<Option<Arc<Expression>>>,
+	descriptor_costs: Vec<DescriptorCost>,
 }
+
+/// The response-side cost of a descriptor sent on the request path, with what to do if it fails.
+type DescriptorCost = (Option<Arc<Expression>>, OnError);
 
 impl LLMResponseAmend {
 	pub fn amend_tokens(mut self, default_tokens: i64, exec: &Executor) {
@@ -156,7 +186,7 @@ impl LLMResponseAmend {
 
 	fn apply_token_amend(
 		request: &mut proto::RateLimitRequest,
-		descriptor_costs: &[Option<Arc<Expression>>],
+		descriptor_costs: &[DescriptorCost],
 		default_tokens: i64,
 		exec: &Executor,
 	) {
@@ -165,39 +195,33 @@ impl LLMResponseAmend {
 		request.descriptors = descriptors
 			.into_iter()
 			.zip(descriptor_costs.iter())
-			.filter_map(|(mut d, cost)| {
-				d.hits_addend = if let Some(cost) = cost.as_ref() {
-					// if there is a cost expression, run it.
-					let value = match exec.eval(cost) {
-						Ok(value) => value,
-						Err(error) => {
-							debug!(
-								domain = %domain,
-								%error,
-								"remote rate limit token cost expression evaluation failed; skipping descriptor"
-							);
-							return None;
-						},
-					};
-					let cost = match value.as_unsigned() {
-						Ok(cost) => cost,
-						Err(error) => {
-							debug!(
-								domain = %domain,
-								%error,
-								"remote rate limit token cost must be a non-negative integer; skipping descriptor"
-							);
-							return None;
-						},
-					};
-					Some(cost as u64)
-				} else {
+			.filter_map(|(mut d, (cost, on_error))| {
+				// if there is a cost expression, run it.
+				let cost = match eval_cost(exec, cost.as_deref(), None) {
+					Ok(cost) => cost,
+					Err(error) if *on_error == OnError::Skip => {
+						debug!(
+							domain = %domain,
+							%error,
+							"remote rate limit token cost expression failed; using the default cost"
+						);
+						None
+					},
+					Err(error) => {
+						// The request has completed, so even `onError: error` can only drop the descriptor.
+						debug!(
+							domain = %domain,
+							%error,
+							"remote rate limit token cost expression failed; skipping descriptor"
+						);
+						return None;
+					},
+				};
+				d.hits_addend = match cost {
+					Some(cost) => Some(cost),
 					// We cannot currently do negative amendments, so if its negative just skip
 					// The input is not the cost, but the delta, so if we get -5 we should have a cost of 5
-					let Ok(tokens) = (default_tokens).try_into() else {
-						return None;
-					};
-					Some(tokens)
+					None => Some(default_tokens.try_into().ok()?),
 				};
 				Some(d)
 			})
@@ -209,16 +233,17 @@ impl RemoteRateLimit {
 	/// Build a rate-limit request by evaluating all descriptor entries of the
 	/// given `limit_type` against the incoming HTTP request.
 	///
-	/// Individual descriptors whose CEL expressions fail to evaluate are
-	/// silently dropped (matching Envoy's per-descriptor "all-or-nothing"
-	/// semantics). Returns `None` only when **no** descriptor could be
+	/// A descriptor whose CEL expressions fail to evaluate is handled according to its
+	/// `on_error`: by default it is dropped (matching Envoy's per-descriptor "all-or-nothing"
+	/// semantics), with `Skip` only the failed expression is ignored, and with `Error` the
+	/// request is rejected. Returns `None` only when **no** descriptor could be
 	/// successfully resolved, so the gRPC call is skipped entirely.
 	fn build_request(
 		&self,
 		req: &http::Request,
 		limit_type: RateLimitType,
 		default_cost: Option<u64>,
-	) -> Option<(RateLimitRequest, Vec<Option<Arc<cel::Expression>>>)> {
+	) -> Result<Option<(RateLimitRequest, Vec<DescriptorCost>)>, ProxyError> {
 		let mut descriptors = Vec::with_capacity(self.descriptors.0.len());
 		let exec = Executor::new_request(req);
 		let candidate_count = self
@@ -239,69 +264,34 @@ impl RemoteRateLimit {
 			.iter()
 			.filter(|e| e.limit_type == limit_type)
 		{
-			if let Some(rl_entries) = Self::eval_descriptor(&exec, &desc_entry.entries) {
-				// Rate limit servers require each descriptor to have at least one entry.
-				if rl_entries.is_empty() {
-					trace!(
-						"ratelimit skipping descriptor with no entries for domain={}, type={:?}",
-						self.domain, limit_type,
+			match self.eval_descriptor_entry(&exec, desc_entry, &limit_type, default_cost) {
+				Ok(Some(descriptor)) => {
+					descriptors.push(descriptor);
+					descriptor_costs.push((desc_entry.cost.clone(), desc_entry.on_error));
+				},
+				Ok(None) => {},
+				Err(error) if desc_entry.on_error == OnError::Error => {
+					debug!(
+						domain = %self.domain,
+						?limit_type,
+						error = %format_args!("{error:#}"),
+						"remote rate limit descriptor failed to evaluate; rejecting request (onError: error)"
 					);
-					continue;
-				}
-				// Trace evaluated descriptor key/value pairs for visibility
-				let kv_pairs: Vec<String> = rl_entries
-					.iter()
-					.map(|e| format!("{}={}", e.key, e.value))
-					.collect();
-				trace!(
-					"ratelimit evaluated descriptors (domain: {}, type: {:?}): {}",
-					self.domain,
-					limit_type,
-					kv_pairs.join(", ")
-				);
-				let hits_addend = if desc_entry.cost.is_some() && limit_type == RateLimitType::Tokens {
-					// Skip sending anything on the target request side; the cost computation is specified to be on the response (amend) side
-					Some(0)
-				} else {
-					match eval_cost(&exec, desc_entry.cost.as_deref(), default_cost) {
-						Ok(hits_addend) => hits_addend,
-						Err(e) => {
-							trace!(
-								"ratelimit cost evaluation failed for domain={}, type={:?}, expr={:?}, error={}",
-								self.domain, limit_type, desc_entry.cost, e
-							);
-							continue;
-						},
-					}
-				};
-
-				let limit = match Self::eval_limit_override(&exec, desc_entry.limit_override.as_deref()) {
-					Ok(limit) => limit,
-					Err(e) => {
-						trace!(
-							"ratelimit limit override evaluation failed for domain={}, type={:?}, expr={:?}, error={}",
-							self.domain, limit_type, desc_entry.limit_override, e
-						);
-						continue;
-					},
-				};
-				descriptors.push(RateLimitDescriptor {
-					entries: rl_entries,
-					limit,
-					hits_addend,
-				});
-				descriptor_costs.push(desc_entry.cost.clone());
-			} else {
-				trace!(
-					"ratelimit descriptor evaluation failed for domain={}, type={:?}, skipping descriptor: {}",
-					self.domain,
-					limit_type,
-					desc_entry
-						.entries
-						.iter()
-						.map(|d| format!("{}={:?}", d.0, d.1))
-						.join(", ")
-				);
+					return Err(ProxyError::RateLimitFailed);
+				},
+				Err(error) => {
+					trace!(
+						"ratelimit descriptor evaluation failed for domain={}, type={:?}, skipping descriptor: {}: {}",
+						self.domain,
+						limit_type,
+						desc_entry
+							.entries
+							.iter()
+							.map(|d| format!("{}={:?}", d.0, d.1))
+							.join(", "),
+						format_args!("{error:#}")
+					);
+				},
 			}
 		}
 
@@ -310,7 +300,7 @@ impl RemoteRateLimit {
 				"ratelimit all descriptors failed evaluation for domain={}, type={:?}, skipping rate-limit call",
 				self.domain, limit_type,
 			);
-			return None;
+			return Ok(None);
 		}
 
 		trace!(
@@ -320,7 +310,7 @@ impl RemoteRateLimit {
 			descriptors.len()
 		);
 
-		Some((
+		Ok(Some((
 			proto::RateLimitRequest {
 				domain: self.domain.clone(),
 				descriptors,
@@ -328,8 +318,74 @@ impl RemoteRateLimit {
 				hits_addend: 0,
 			},
 			descriptor_costs,
-		))
+		)))
 	}
+
+	/// Evaluate one descriptor. Returns `Ok(None)` when it has no entries to send, and an error
+	/// when one of its expressions failed and `on_error` is not `Skip`.
+	fn eval_descriptor_entry(
+		&self,
+		exec: &cel::Executor<'_>,
+		desc_entry: &DescriptorEntry,
+		limit_type: &RateLimitType,
+		default_cost: Option<u64>,
+	) -> anyhow::Result<Option<RateLimitDescriptor>> {
+		let skip = desc_entry.on_error == OnError::Skip;
+		let rl_entries = Self::eval_descriptor(exec, &desc_entry.entries, skip)?;
+		// Rate limit servers require each descriptor to have at least one entry.
+		if rl_entries.is_empty() {
+			trace!(
+				"ratelimit skipping descriptor with no entries for domain={}, type={:?}",
+				self.domain, limit_type,
+			);
+			return Ok(None);
+		}
+		// Trace evaluated descriptor key/value pairs for visibility
+		let kv_pairs: Vec<String> = rl_entries
+			.iter()
+			.map(|e| format!("{}={}", e.key, e.value))
+			.collect();
+		trace!(
+			"ratelimit evaluated descriptors (domain: {}, type: {:?}): {}",
+			self.domain,
+			limit_type,
+			kv_pairs.join(", ")
+		);
+		let hits_addend = if desc_entry.cost.is_some() && *limit_type == RateLimitType::Tokens {
+			// Skip sending anything on the target request side; the cost computation is specified to be on the response (amend) side
+			Some(0)
+		} else {
+			match eval_cost(exec, desc_entry.cost.as_deref(), default_cost) {
+				Ok(hits_addend) => hits_addend,
+				Err(e) if skip => {
+					trace!(
+						"ratelimit cost evaluation failed for domain={}, type={:?}, expr={:?}, error={}; using the default cost",
+						self.domain, limit_type, desc_entry.cost, e
+					);
+					default_cost
+				},
+				Err(e) => return Err(e.context("cost")),
+			}
+		};
+
+		let limit = match Self::eval_limit_override(exec, desc_entry.limit_override.as_deref()) {
+			Ok(limit) => limit,
+			Err(e) if skip => {
+				trace!(
+					"ratelimit limit override evaluation failed for domain={}, type={:?}, expr={:?}, error={}; sending no override",
+					self.domain, limit_type, desc_entry.limit_override, e
+				);
+				None
+			},
+			Err(e) => return Err(e.context("limitOverride")),
+		};
+		Ok(Some(RateLimitDescriptor {
+			entries: rl_entries,
+			limit,
+			hits_addend,
+		}))
+	}
+
 	pub async fn check_llm(
 		&self,
 		client: PolicyClient,
@@ -354,7 +410,7 @@ impl RemoteRateLimit {
 		// If they have tokenization enabled, we have an explicit cost to send, so we can send it.
 		// Else send '0'.
 		let Some((request, descriptor_costs)) =
-			self.build_request(req, RateLimitType::Tokens, Some(default_cost))
+			self.build_request(req, RateLimitType::Tokens, Some(default_cost))?
 		else {
 			return Ok((PolicyResponse::default(), None));
 		};
@@ -397,7 +453,7 @@ impl RemoteRateLimit {
 			);
 			return Ok(PolicyResponse::default());
 		}
-		let Some((request, _)) = self.build_request(req, RateLimitType::Requests, None) else {
+		let Some((request, _)) = self.build_request(req, RateLimitType::Requests, None)? else {
 			return Ok(PolicyResponse::default());
 		};
 		match self.check_internal(client, request).await {
@@ -530,35 +586,46 @@ impl RemoteRateLimit {
 		}))
 	}
 
-	fn eval_descriptor(exec: &cel::Executor<'_>, entries: &Vec<Descriptor>) -> Option<Vec<Entry>> {
+	/// Evaluate the entries of a descriptor. A failed entry fails the whole descriptor, unless
+	/// `skip` is set, in which case the entry is left out.
+	fn eval_descriptor(
+		exec: &cel::Executor<'_>,
+		entries: &Vec<Descriptor>,
+		skip: bool,
+	) -> anyhow::Result<Vec<Entry>> {
 		let mut rl_entries = Vec::with_capacity(entries.len());
 		for Descriptor(k, lookup) in entries {
-			// We drop the entire set if we cannot eval one; emit trace to aid debugging
-			match exec.eval(lookup) {
-				Ok(value) => {
-					let Ok(string_value) = value.as_string() else {
-						trace!(
-							"ratelimit descriptor value not convertible to string: key={}, expr={:?}",
-							k, lookup
-						);
-						return None;
-					};
-					let entry = Entry {
-						key: k.clone(),
-						value: string_value,
-					};
-					rl_entries.push(entry);
+			let value = exec
+				.eval(lookup)
+				.map_err(anyhow::Error::from)
+				.and_then(|value| {
+					value
+						.as_string()
+						.map_err(|_| anyhow::anyhow!("value is not convertible to a string"))
+				});
+			match value {
+				Ok(value) => rl_entries.push(Entry {
+					key: k.clone(),
+					value,
+				}),
+				// Emit trace to aid debugging
+				Err(e) if skip => {
+					trace!(
+						"ratelimit failed to evaluate expression, skipping entry: key={}, expr={:?}, error={}",
+						k, lookup, e
+					);
 				},
 				Err(e) => {
 					trace!(
 						"ratelimit failed to evaluate expression: key={}, expr={:?}, error={}",
 						k, lookup, e
 					);
-					return None;
+					// We drop the entire set if we cannot eval one
+					return Err(e.context(format!("entry {k}")));
 				},
 			}
 		}
-		Some(rl_entries)
+		Ok(rl_entries)
 	}
 
 	pub fn expressions(&self) -> impl Iterator<Item = &Expression> {

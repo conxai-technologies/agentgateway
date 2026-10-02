@@ -6224,7 +6224,7 @@
           "default": "requests"
         },
         "cost": {
-          "description": "cost determines the optional expression to determine the cost of the request.\nIf unset, type `requests` defaults to `1`, and type `tokens` defaults to `llm.totalTokens`.\nIf the expression fails to evaluate, the descriptor is skipped.\nCosts for type `requests` are evaluated during request processing. Costs for type `tokens`\nare evaluated upon request completion.",
+          "description": "cost determines the optional expression to determine the cost of the request.\nIf unset, type `requests` defaults to `1`, and type `tokens` defaults to `llm.totalTokens`.\nIf the expression fails to evaluate, `onError` decides what happens.\nCosts for type `requests` are evaluated during request processing. Costs for type `tokens`\nare evaluated upon request completion.",
           "anyOf": [
             {
               "$ref": "#/$defs/Expression"
@@ -6235,7 +6235,7 @@
           ]
         },
         "limitOverride": {
-          "description": "limitOverride determines the optional expression to determine the limit of the request.\nThis tells the remote server what limit to apply to the request.\nNote: this does not specify the *cost* of the request, which is done by the `cost` field.\nThe expression must evaluate to a map with `unit` and `requestsPerUnit` keys. For example:\n`{\"unit\":\"second\",\"requestsPerUnit\":100}`.\nValid units: second, minute, hour, day, month, year\nIf the expression fails to evaluate, the descriptor is skipped.",
+          "description": "limitOverride determines the optional expression to determine the limit of the request.\nThis tells the remote server what limit to apply to the request.\nNote: this does not specify the *cost* of the request, which is done by the `cost` field.\nThe expression must evaluate to a map with `unit` and `requestsPerUnit` keys. For example:\n`{\"unit\":\"second\",\"requestsPerUnit\":100}`.\nValid units: second, minute, hour, day, month, year\nIf the expression fails to evaluate, `onError` decides what happens.",
           "anyOf": [
             {
               "$ref": "#/$defs/Expression"
@@ -6244,6 +6244,11 @@
               "type": "null"
             }
           ]
+        },
+        "onError": {
+          "description": "What to do when an expression of this descriptor fails to evaluate.\nDefaults to `drop`, which leaves the descriptor out of the check. Use `error` to reject\nthe request instead, so a missing attribute cannot bypass the limit.",
+          "$ref": "#/$defs/RemoteRateLimitOnError",
+          "default": "drop"
         }
       },
       "additionalProperties": false,
@@ -6266,6 +6271,26 @@
       "required": [
         "key",
         "value"
+      ]
+    },
+    "RemoteRateLimitOnError": {
+      "description": "Defines what happens to a descriptor when one of its expressions (an entry value, `cost`, or\n`limitOverride`) fails to evaluate or returns a value of the wrong type, for example because\nthe request lacks a header the descriptor reads.",
+      "oneOf": [
+        {
+          "description": "Drop the whole descriptor and send the remaining ones (default). If no descriptor remains,\nthe rate limit service is not called and the request is allowed.",
+          "type": "string",
+          "const": "drop"
+        },
+        {
+          "description": "Ignore only the expression that failed: a failed entry is left out of the descriptor, a\nfailed `cost` falls back to the default cost, and a failed `limitOverride` is not sent.\nA descriptor left without entries is dropped.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "Reject the request with a 500 status, as when the rate limit service fails under\n`failClosed`. Use this when the descriptor enforces a limit that must not be bypassed.\n`tokens` costs evaluated after the response can no longer reject the request; there the\ndescriptor is dropped.",
+          "type": "string",
+          "const": "error"
+        }
       ]
     },
     "RemoteRateLimitFailureMode": {
