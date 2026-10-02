@@ -27,8 +27,8 @@ pub(crate) static METRICS: LazyLock<LogStoreMetrics> = LazyLock::new(LogStoreMet
 
 #[derive(Default)]
 pub(crate) struct LogStoreMetrics {
-	/// 1 when the last connect or write succeeded, 0 when it failed or no connection exists yet.
-	pub up: Gauge,
+	/// 1 while the database is unreachable (the last connect or write failed), 0 otherwise.
+	pub unavailable: Gauge,
 	pub queued_records: Gauge,
 	pub dropped_records: Family<DropLabels, Counter>,
 }
@@ -411,7 +411,7 @@ impl LogStoreWorker {
 			}
 			backend
 		};
-		METRICS.up.set(1);
+		METRICS.unavailable.set(0);
 		self.notify_ready(Ok(()));
 		let mut batch = Vec::with_capacity(batch_size);
 		loop {
@@ -487,7 +487,7 @@ impl LogStoreWorker {
 					return Some((backend, pending));
 				},
 				Err(err) => {
-					METRICS.up.set(0);
+					METRICS.unavailable.set(1);
 					warn!(
 						target: "request",
 						?err,
@@ -652,9 +652,9 @@ async fn write_records(backend: &Backend, queue: &QueueState, records: &[StoredR
 	let t0 = Instant::now();
 	let count = records.len();
 	match backend.insert_batch(records).await {
-		Ok(()) => METRICS.up.set(1),
+		Ok(()) => METRICS.unavailable.set(0),
 		Err(err) => {
-			METRICS.up.set(0);
+			METRICS.unavailable.set(1);
 			METRICS.dropped(DropReason::WriteFailed, count);
 			warn!(target: "request", ?err, count, "failed to persist request log batch");
 		},

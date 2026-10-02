@@ -466,9 +466,9 @@ impl Metrics {
 
 		let log_store = &crate::telemetry::log_store::METRICS;
 		registry.register(
-			"log_store_up",
-			"Whether the request log database is reachable: 1 after a successful connect or write, 0 after a failed one or before the first connect",
-			log_store.up.clone(),
+			"log_store_unavailable",
+			"1 while the request log database is unreachable (its last connect or write failed), 0 otherwise",
+			log_store.unavailable.clone(),
 		);
 		registry.register(
 			"log_store_queued_records",
