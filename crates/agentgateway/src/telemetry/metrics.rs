@@ -474,6 +474,24 @@ impl Metrics {
 			gen_ai_inter_chunk_latency.clone(),
 		);
 
+		let capacity_sync = &crate::llm::capacity::SYNC_METRICS;
+		registry.register(
+			"gen_ai_provider_capacity_shared",
+			"1 while LLM provider capacity usage is shared with the other replicas through the database (the last sync succeeded within 15 seconds), 0 while each replica only counts its own traffic",
+			capacity_sync.shared.clone(),
+		);
+		registry.register_with_unit(
+			"gen_ai_provider_capacity_sync_age",
+			"Time since this replica last synced LLM provider capacity usage with the database successfully (since the sync started, if it never succeeded); 0 without a database",
+			Unit::Seconds,
+			capacity_sync.sync_age.clone(),
+		);
+		registry.register(
+			"gen_ai_provider_capacity_sync_failures",
+			"The total number of failed syncs of LLM provider capacity usage with the database",
+			capacity_sync.sync_failures.clone(),
+		);
+
 		Metrics {
 			substrate_request_parking_active: {
 				let m = Gauge::default();
@@ -539,7 +557,7 @@ impl Metrics {
 				let m = Family::default();
 				registry.register(
 					"gen_ai_provider_capacity_headroom",
-					"Remaining capacity of an LLM provider with a declared capacity, as a fraction of its limit (minimum over requests, input and output tokens per minute), as estimated by this replica",
+					"Remaining capacity of an LLM provider with a declared capacity, as a fraction of its limit (minimum over requests, input and output tokens per minute), as estimated by this replica (counting the other replicas while usage is shared)",
 					m.clone(),
 				);
 				m

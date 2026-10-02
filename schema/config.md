@@ -10854,10 +10854,11 @@
 |`binds[].listeners[].routes[].backends[].ai.policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`binds[].listeners[].routes[].backends[].ai.policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`binds[].listeners[].routes[].backends[].ai.policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`binds[].listeners[].routes[].backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`binds[].listeners[].routes[].backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`binds[].listeners[].routes[].backends[].ai.capacity.rpm`|integer|Requests per minute.|
 |`binds[].listeners[].routes[].backends[].ai.capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`binds[].listeners[].routes[].backends[].ai.capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`binds[].listeners[].routes[].backends[].ai.capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`binds[].listeners[].routes[].backends[].ai.groups`|[]object||
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers`|[]object|LLM providers in this group, load balanced together.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].name`|string|Name identifying this provider, referenced by `llm.models[].provider`.|
@@ -14824,10 +14825,11 @@
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`binds[].listeners[].routes[].backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`binds[].listeners[].routes[].backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].capacity.rpm`|integer|Requests per minute.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].providers[].capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`binds[].listeners[].routes[].backends[].ai.groups[].providers[].capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`binds[].listeners[].routes[].backends[].ai.groups[].reserveForHighPriority`|number|Fraction of capacity headroom (0 to 1, exclusive) that low-priority requests leave to<br>high-priority ones: a low-priority request only uses a provider in this group whose<br>headroom is above this value. Requires `priority` on the backend.|
 |`binds[].listeners[].routes[].backends[].ai.priority`|string|CEL expression evaluated against the request to classify its priority: a result of<br>`"low"` makes it low priority, anything else (including errors) high priority. Low-priority<br>requests only use providers whose capacity headroom is above their group's<br>`reserveForHighPriority`, and are refused with a 429 when none is.<br>For example `apiKey.class == "batch" ? "low" : "high"`.|
 |`binds[].listeners[].routes[].backends[].aws`|object||
@@ -32620,10 +32622,11 @@
 |`backends[].ai.policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`backends[].ai.policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`backends[].ai.policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`backends[].ai.capacity.rpm`|integer|Requests per minute.|
 |`backends[].ai.capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`backends[].ai.capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`backends[].ai.capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`backends[].ai.groups`|[]object||
 |`backends[].ai.groups[].providers`|[]object|LLM providers in this group, load balanced together.|
 |`backends[].ai.groups[].providers[].name`|string|Name identifying this provider, referenced by `llm.models[].provider`.|
@@ -36590,10 +36593,11 @@
 |`backends[].ai.groups[].providers[].policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`backends[].ai.groups[].providers[].policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`backends[].ai.groups[].providers[].policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`backends[].ai.groups[].providers[].capacity.rpm`|integer|Requests per minute.|
 |`backends[].ai.groups[].providers[].capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`backends[].ai.groups[].providers[].capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`backends[].ai.groups[].providers[].capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`backends[].ai.groups[].reserveForHighPriority`|number|Fraction of capacity headroom (0 to 1, exclusive) that low-priority requests leave to<br>high-priority ones: a low-priority request only uses a provider in this group whose<br>headroom is above this value. Requires `priority` on the backend.|
 |`backends[].ai.priority`|string|CEL expression evaluated against the request to classify its priority: a result of<br>`"low"` makes it low priority, anything else (including errors) high priority. Low-priority<br>requests only use providers whose capacity headroom is above their group's<br>`reserveForHighPriority`, and are refused with a 429 when none is.<br>For example `apiKey.class == "batch" ? "low" : "high"`.|
 |`backends[].aws`|object||
@@ -51244,10 +51248,11 @@
 |`routeGroups[].routes[].backends[].ai.policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`routeGroups[].routes[].backends[].ai.policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`routeGroups[].routes[].backends[].ai.policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`routeGroups[].routes[].backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`routeGroups[].routes[].backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`routeGroups[].routes[].backends[].ai.capacity.rpm`|integer|Requests per minute.|
 |`routeGroups[].routes[].backends[].ai.capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`routeGroups[].routes[].backends[].ai.capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`routeGroups[].routes[].backends[].ai.capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`routeGroups[].routes[].backends[].ai.groups`|[]object||
 |`routeGroups[].routes[].backends[].ai.groups[].providers`|[]object|LLM providers in this group, load balanced together.|
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].name`|string|Name identifying this provider, referenced by `llm.models[].provider`.|
@@ -55214,10 +55219,11 @@
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`routeGroups[].routes[].backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`routeGroups[].routes[].backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].capacity.rpm`|integer|Requests per minute.|
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`routeGroups[].routes[].backends[].ai.groups[].providers[].capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`routeGroups[].routes[].backends[].ai.groups[].providers[].capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`routeGroups[].routes[].backends[].ai.groups[].reserveForHighPriority`|number|Fraction of capacity headroom (0 to 1, exclusive) that low-priority requests leave to<br>high-priority ones: a low-priority request only uses a provider in this group whose<br>headroom is above this value. Requires `priority` on the backend.|
 |`routeGroups[].routes[].backends[].ai.priority`|string|CEL expression evaluated against the request to classify its priority: a result of<br>`"low"` makes it low priority, anything else (including errors) high priority. Low-priority<br>requests only use providers whose capacity headroom is above their group's<br>`reserveForHighPriority`, and are refused with a 429 when none is.<br>For example `apiKey.class == "batch" ? "low" : "high"`.|
 |`routeGroups[].routes[].backends[].aws`|object||
@@ -72539,10 +72545,11 @@
 |`routes[].backends[].ai.policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`routes[].backends[].ai.policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`routes[].backends[].ai.policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`routes[].backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`routes[].backends[].ai.capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`routes[].backends[].ai.capacity.rpm`|integer|Requests per minute.|
 |`routes[].backends[].ai.capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`routes[].backends[].ai.capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`routes[].backends[].ai.capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`routes[].backends[].ai.groups`|[]object||
 |`routes[].backends[].ai.groups[].providers`|[]object|LLM providers in this group, load balanced together.|
 |`routes[].backends[].ai.groups[].providers[].name`|string|Name identifying this provider, referenced by `llm.models[].provider`.|
@@ -76509,10 +76516,11 @@
 |`routes[].backends[].ai.groups[].providers[].policies.ai.promptCaching.minTokens`|integer|Minimum prompt size required before cache markers are added.|
 |`routes[].backends[].ai.groups[].providers[].policies.ai.promptCaching.cacheMessageOffset`|integer|Message offset used when choosing where to place cache markers.|
 |`routes[].backends[].ai.groups[].providers[].policies.ai.routes`|object|Route type overrides selected by request path suffix.|
-|`routes[].backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is tracked per replica.|
+|`routes[].backends[].ai.groups[].providers[].capacity`|object|Limits the upstream enforces for this provider, per minute. Providers with more remaining<br>headroom are preferred, and providers without headroom are skipped while another provider<br>in the same group has some. Usage is shared across replicas through `config.database` when<br>one is configured.|
 |`routes[].backends[].ai.groups[].providers[].capacity.rpm`|integer|Requests per minute.|
 |`routes[].backends[].ai.groups[].providers[].capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`routes[].backends[].ai.groups[].providers[].capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`routes[].backends[].ai.groups[].providers[].capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`routes[].backends[].ai.groups[].reserveForHighPriority`|number|Fraction of capacity headroom (0 to 1, exclusive) that low-priority requests leave to<br>high-priority ones: a low-priority request only uses a provider in this group whose<br>headroom is above this value. Requires `priority` on the backend.|
 |`routes[].backends[].ai.priority`|string|CEL expression evaluated against the request to classify its priority: a result of<br>`"low"` makes it low priority, anything else (including errors) high priority. Low-priority<br>requests only use providers whose capacity headroom is above their group's<br>`reserveForHighPriority`, and are refused with a 429 when none is.<br>For example `apiKey.class == "batch" ? "low" : "high"`.|
 |`routes[].backends[].aws`|object||
@@ -84814,10 +84822,11 @@
 |`llm.models[].matches[].headers[].value`|object|Exact or regex pattern the header value must match.<br>Exactly one of exact or regex may be set.|
 |`llm.models[].matches[].headers[].value.exact`|string||
 |`llm.models[].matches[].headers[].value.regex`|string||
-|`llm.models[].capacity`|object|capacity declares the limits the upstream enforces for this model, per minute. Virtual model<br>failover prefers targets with more remaining headroom and skips targets without headroom<br>while another target at the same priority has some. Usage is tracked per replica.|
+|`llm.models[].capacity`|object|capacity declares the limits the upstream enforces for this model, per minute. Virtual model<br>failover prefers targets with more remaining headroom and skips targets without headroom<br>while another target at the same priority has some. Usage is shared across replicas through<br>`config.database` when one is configured.|
 |`llm.models[].capacity.rpm`|integer|Requests per minute.|
 |`llm.models[].capacity.inputTpm`|integer|Input (prompt) tokens per minute.|
 |`llm.models[].capacity.outputTpm`|integer|Output (completion) tokens per minute.|
+|`llm.models[].capacity.expectedReplicas`|integer|Number of gateway replicas sending traffic against these limits, used while usage is not<br>shared through `config.database` (no database configured, or no successful sync in the<br>last 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.<br>While usage is shared, replicas count each other's traffic and the full limits apply.<br>Defaults to 1.|
 |`llm.virtualModels`|[]object|virtualModels defines a set of models that can be served from the gateway. The model name refers to the<br>model in the users request that is matched. However, unlike the `models` field, virtual models will<br>dynamically route to a specific model (configured in `models`) based on the configured logic.|
 |`llm.virtualModels[].name`|string|name is the public model name clients request.|
 |`llm.virtualModels[].routing`|object|routing selects an existing LLM model backend for each request.|
