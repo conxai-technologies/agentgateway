@@ -157,6 +157,9 @@ pub fn classify_route(path: &str) -> Option<llm::RouteType> {
 	None
 }
 
+/// Maximum number of virtual models a request may pass through before reaching a concrete model.
+pub const MAX_VIRTUAL_MODEL_DEPTH: usize = 4;
+
 #[apply(schema_ser_schema!)]
 pub struct VirtualModelRoute {
 	pub name: String,
@@ -180,6 +183,9 @@ pub struct WeightedTarget {
 	// XDS-only resolution state. User-facing configuration does not expose this field.
 	#[serde(skip_serializing_if = "std::ops::Not::not")]
 	pub invalid: bool,
+	// Set when `model` names another virtual model, which then selects the target.
+	#[serde(skip_serializing_if = "std::ops::Not::not")]
+	pub virtual_model: bool,
 }
 
 #[apply(schema_ser_schema!)]
@@ -189,6 +195,9 @@ pub struct ConditionalTarget {
 	// XDS-only resolution state. User-facing configuration does not expose this field.
 	#[serde(skip_serializing_if = "std::ops::Not::not")]
 	pub invalid: bool,
+	// Set when `model` names another virtual model, which then selects the target.
+	#[serde(skip_serializing_if = "std::ops::Not::not")]
+	pub virtual_model: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -424,77 +433,110 @@ impl ModelRouter {
 
 	async fn resolve_virtual_model(
 		&self,
-		virtual_model: &VirtualModelRoute,
+		mut virtual_model: &VirtualModelRoute,
 		req: &mut Request,
 		location: RequestedModelLocation,
 	) -> ResolveResult {
-		let (target, invalid) = match &virtual_model.routing {
-			VirtualModelRouting::Weighted(targets) => {
-				match targets.choose_weighted(&mut rand::rng(), |target| target.weight) {
-					Ok(target) => (target.model.clone(), target.invalid),
-					Err(err) => {
-						tracing::debug!(%err, "failed to select weighted virtual model target");
-						return ResolveResult::DirectResponse(llm_error_response(
-							::http::StatusCode::NOT_FOUND,
-							&format!("Virtual model {} could not be resolved", virtual_model.name),
-							"virtual_model_not_resolved",
-						));
-					},
-				}
-			},
-			VirtualModelRouting::Failover { backend } => {
-				if let RequestedModelLocation::Body(body) = location {
-					req
-						.body_mut()
-						.insert_extension(crate::json::ParsedJson(body));
-				}
-				return ResolveResult::Backend(ResolvedBackend {
-					backend: backend.clone(),
-					route_type: classify_route(req.uri().path()).unwrap_or(llm::RouteType::Passthrough),
-					llm_policy: virtual_model.llm_policy.clone(),
-				});
-			},
-			VirtualModelRouting::Conditional(targets) => {
-				let exec = match location.llm_request() {
-					Some(llm_request) => cel::Executor::new_llm_request(req, llm_request),
-					None => cel::Executor::new_request(req),
-				};
-				match targets.iter().find(|target| {
-					target
-						.when
-						.as_ref()
-						.map(|expr| exec.eval_bool(expr))
-						.unwrap_or(true)
-				}) {
-					Some(target) => (target.model.clone(), target.invalid),
-					None => {
-						return ResolveResult::DirectResponse(llm_error_response(
-							::http::StatusCode::BAD_REQUEST,
-							&format!(
-								"Virtual model {} did not match any conditional target",
-								virtual_model.name
-							),
-							"virtual_model_no_matching_target",
-						));
-					},
-				}
-			},
-		};
-		if invalid {
-			tracing::debug!(
+		let mut depth = 1;
+		let target = loop {
+			let (target, invalid, nested) = match &virtual_model.routing {
+				VirtualModelRouting::Weighted(targets) => {
+					match targets.choose_weighted(&mut rand::rng(), |target| target.weight) {
+						Ok(target) => (target.model.clone(), target.invalid, target.virtual_model),
+						Err(err) => {
+							tracing::debug!(%err, "failed to select weighted virtual model target");
+							return ResolveResult::DirectResponse(llm_error_response(
+								::http::StatusCode::NOT_FOUND,
+								&format!("Virtual model {} could not be resolved", virtual_model.name),
+								"virtual_model_not_resolved",
+							));
+						},
+					}
+				},
+				VirtualModelRouting::Failover { backend } => {
+					if let RequestedModelLocation::Body(body) = location {
+						req
+							.body_mut()
+							.insert_extension(crate::json::ParsedJson(body));
+					}
+					return ResolveResult::Backend(ResolvedBackend {
+						backend: backend.clone(),
+						route_type: classify_route(req.uri().path()).unwrap_or(llm::RouteType::Passthrough),
+						llm_policy: virtual_model.llm_policy.clone(),
+					});
+				},
+				VirtualModelRouting::Conditional(targets) => {
+					let exec = match location.llm_request() {
+						Some(llm_request) => cel::Executor::new_llm_request(req, llm_request),
+						None => cel::Executor::new_request(req),
+					};
+					match targets.iter().find(|target| {
+						target
+							.when
+							.as_ref()
+							.map(|expr| exec.eval_bool(expr))
+							.unwrap_or(true)
+					}) {
+						Some(target) => (target.model.clone(), target.invalid, target.virtual_model),
+						None => {
+							return ResolveResult::DirectResponse(llm_error_response(
+								::http::StatusCode::BAD_REQUEST,
+								&format!(
+									"Virtual model {} did not match any conditional target",
+									virtual_model.name
+								),
+								"virtual_model_no_matching_target",
+							));
+						},
+					}
+				},
+			};
+			let nested_model = if nested {
+				self.virtual_models.iter().find(|model| model.name == target)
+			} else {
+				None
+			};
+			if invalid || (nested && nested_model.is_none()) {
+				tracing::debug!(
+					virtual_model = %virtual_model.name,
+					target_model = %target,
+					"virtual model selected an invalid target",
+				);
+				return ResolveResult::DirectResponse(llm_error_response(
+					::http::StatusCode::NOT_FOUND,
+					&format!(
+						"Virtual model {} selected invalid target {target}",
+						virtual_model.name
+					),
+					"virtual_model_target_not_found",
+				));
+			}
+			let Some(nested_model) = nested_model else {
+				break target;
+			};
+			if depth >= MAX_VIRTUAL_MODEL_DEPTH {
+				tracing::debug!(
+					virtual_model = %virtual_model.name,
+					target_model = %target,
+					"virtual model nesting exceeded the maximum depth",
+				);
+				return ResolveResult::DirectResponse(llm_error_response(
+					::http::StatusCode::INTERNAL_SERVER_ERROR,
+					&format!(
+						"Virtual model {} exceeded the maximum nesting depth of {MAX_VIRTUAL_MODEL_DEPTH}",
+						virtual_model.name
+					),
+					"virtual_model_depth_exceeded",
+				));
+			}
+			tracing::trace!(
 				virtual_model = %virtual_model.name,
 				target_model = %target,
-				"virtual model selected an invalid target",
+				"virtual model selected another virtual model",
 			);
-			return ResolveResult::DirectResponse(llm_error_response(
-				::http::StatusCode::NOT_FOUND,
-				&format!(
-					"Virtual model {} selected invalid target {target}",
-					virtual_model.name
-				),
-				"virtual_model_target_not_found",
-			));
-		}
+			depth += 1;
+			virtual_model = nested_model;
+		};
 
 		if let Err(resp) = Box::pin(rewrite_request_model(req, location, &target)).await {
 			return ResolveResult::DirectResponse(*resp);
@@ -1125,6 +1167,7 @@ mod tests {
 					ConditionalTarget {
 						model: "economy-model".to_string(),
 						invalid: false,
+						virtual_model: false,
 						when: Some(Arc::new(
 							cel::Expression::new_strict("llmRequest.max_tokens <= 1024")
 								.expect("valid CEL expression"),
@@ -1133,6 +1176,7 @@ mod tests {
 					ConditionalTarget {
 						model: "premium-model".to_string(),
 						invalid: false,
+						virtual_model: false,
 						when: None,
 					},
 				]),
@@ -1252,6 +1296,7 @@ mod tests {
 					model: "missing-model".to_string(),
 					weight: 1,
 					invalid: true,
+					virtual_model: false,
 				}]),
 			}],
 		);
@@ -1290,11 +1335,13 @@ mod tests {
 								.expect("valid CEL expression"),
 						)),
 						invalid: true,
+						virtual_model: false,
 					},
 					ConditionalTarget {
 						model: "fallback-model".to_string(),
 						when: None,
 						invalid: false,
+						virtual_model: false,
 					},
 				]),
 			}],
@@ -1317,6 +1364,206 @@ mod tests {
 			.expect("error body");
 		let body: Value = serde_json::from_slice(&body).expect("error JSON");
 		assert_eq!(body["error"]["code"], "virtual_model_target_not_found");
+	}
+
+	fn internal_model(name: &str) -> ModelRoute {
+		ModelRoute {
+			discovery: None,
+			id: None,
+			name: name.to_string(),
+			created: 0,
+			visibility: ModelVisibility::Internal,
+			header_matches: vec![],
+			backend: RouteBackendReference {
+				weight: 1,
+				target: RouteBackendTarget::Backend(strng::format!("/{name}")),
+				inline_policies: vec![],
+			},
+			policies: ModelRoutePolicies {
+				passthrough: None,
+				llm: Arc::default(),
+				authorization: None,
+			},
+			backend_policies: vec![],
+		}
+	}
+
+	fn failover_virtual_model(name: &str) -> VirtualModelRoute {
+		VirtualModelRoute {
+			name: name.to_string(),
+			created: 0,
+			llm_policy: Arc::default(),
+			routing: VirtualModelRouting::Failover {
+				backend: RouteBackendReference {
+					weight: 1,
+					target: RouteBackendTarget::Backend(strng::format!("/{name}")),
+					inline_policies: vec![],
+				},
+			},
+		}
+	}
+
+	fn weighted_virtual_model(name: &str, target: &str, virtual_model: bool) -> VirtualModelRoute {
+		VirtualModelRoute {
+			name: name.to_string(),
+			created: 0,
+			llm_policy: Arc::default(),
+			routing: VirtualModelRouting::Weighted(vec![WeightedTarget {
+				model: target.to_string(),
+				weight: 1,
+				invalid: false,
+				virtual_model,
+			}]),
+		}
+	}
+
+	fn chat_request(model: &str, headers: &[(&str, &str)]) -> Request {
+		let mut builder = ::http::Request::builder().uri("http://example.com/v1/chat/completions");
+		for (name, value) in headers {
+			builder = builder.header(*name, *value);
+		}
+		builder
+			.body(http::Body::from(format!(r#"{{"model":"{model}"}}"#)))
+			.expect("valid request")
+	}
+
+	async fn resolved_backend(router: &ModelRouter, req: &mut Request) -> String {
+		match router
+			.resolve(req, &llm::catalog::ModelCatalog::default())
+			.await
+		{
+			ResolveResult::Backend(ResolvedBackend {
+				backend: RouteBackendReference {
+					target: RouteBackendTarget::Backend(key),
+					..
+				},
+				..
+			}) => key.to_string(),
+			ResolveResult::Backend(resolved) => panic!("unexpected backend {:?}", resolved.backend),
+			ResolveResult::DirectResponse(resp) => panic!("expected a backend, got {}", resp.status()),
+		}
+	}
+
+	async fn error_code(router: &ModelRouter, req: &mut Request) -> (::http::StatusCode, Value) {
+		let ResolveResult::DirectResponse(resp) = router
+			.resolve(req, &llm::catalog::ModelCatalog::default())
+			.await
+		else {
+			panic!("expected an error response");
+		};
+		let status = resp.status();
+		let body = http::read_body_with_limit(resp.into_body(), 1024)
+			.await
+			.expect("error body");
+		let body: Value = serde_json::from_slice(&body).expect("error JSON");
+		(status, body["error"]["code"].clone())
+	}
+
+	#[tokio::test]
+	async fn nested_conditional_virtual_model_selects_failover_group() {
+		let router = ModelRouter::new(
+			vec![],
+			vec![
+				VirtualModelRoute {
+					name: "assistant".to_string(),
+					created: 0,
+					llm_policy: Arc::default(),
+					routing: VirtualModelRouting::Conditional(vec![
+						ConditionalTarget {
+							model: "assistant-eu".to_string(),
+							when: Some(Arc::new(
+								cel::Expression::new_strict("request.headers['x-data-residency'] == 'eu'")
+									.expect("valid CEL expression"),
+							)),
+							invalid: false,
+							virtual_model: true,
+						},
+						ConditionalTarget {
+							model: "assistant-global".to_string(),
+							when: None,
+							invalid: false,
+							virtual_model: true,
+						},
+					]),
+				},
+				failover_virtual_model("assistant-eu"),
+				failover_virtual_model("assistant-global"),
+			],
+		);
+
+		let mut req = chat_request("assistant", &[("x-data-residency", "eu")]);
+		assert_eq!(resolved_backend(&router, &mut req).await, "/assistant-eu");
+		// The failover group's providers set the upstream model; the request body is left as sent.
+		let cached = req
+			.body()
+			.extension::<crate::json::ParsedJson>()
+			.expect("parsed body is cached for the backend")
+			.0
+			.clone();
+		assert_eq!(cached["model"], "assistant");
+
+		let mut req = chat_request("assistant", &[]);
+		assert_eq!(
+			resolved_backend(&router, &mut req).await,
+			"/assistant-global"
+		);
+	}
+
+	#[tokio::test]
+	async fn nested_virtual_model_rewrites_request_to_concrete_target() {
+		let router = ModelRouter::new(
+			vec![internal_model("economy-model")],
+			vec![
+				weighted_virtual_model("outer", "inner", true),
+				weighted_virtual_model("inner", "economy-model", false),
+			],
+		);
+		let mut req = chat_request("outer", &[]);
+		assert_eq!(resolved_backend(&router, &mut req).await, "/economy-model");
+		let body = http::read_body_with_limit(req.into_body(), 1024)
+			.await
+			.expect("rewritten request body");
+		let body: Value = serde_json::from_slice(&body).expect("valid JSON request body");
+		assert_eq!(body["model"], "economy-model");
+	}
+
+	#[tokio::test]
+	async fn nested_virtual_model_depth_is_bounded() {
+		let chain = |len: usize| {
+			let mut models = (0..len - 1)
+				.map(|idx| weighted_virtual_model(&format!("v{idx}"), &format!("v{}", idx + 1), true))
+				.collect::<Vec<_>>();
+			models.push(weighted_virtual_model(
+				&format!("v{}", len - 1),
+				"concrete",
+				false,
+			));
+			ModelRouter::new(vec![internal_model("concrete")], models)
+		};
+
+		let router = chain(MAX_VIRTUAL_MODEL_DEPTH);
+		assert_eq!(
+			resolved_backend(&router, &mut chat_request("v0", &[])).await,
+			"/concrete"
+		);
+
+		let router = chain(MAX_VIRTUAL_MODEL_DEPTH + 1);
+		let (status, code) = error_code(&router, &mut chat_request("v0", &[])).await;
+		assert_eq!(status, ::http::StatusCode::INTERNAL_SERVER_ERROR);
+		assert_eq!(code, "virtual_model_depth_exceeded");
+
+		// A cycle that reached the router anyway terminates at the depth limit.
+		let router = ModelRouter::new(vec![], vec![weighted_virtual_model("loop", "loop", true)]);
+		let (_, code) = error_code(&router, &mut chat_request("loop", &[])).await;
+		assert_eq!(code, "virtual_model_depth_exceeded");
+	}
+
+	#[tokio::test]
+	async fn nested_virtual_model_missing_target_fails() {
+		let router = ModelRouter::new(vec![], vec![weighted_virtual_model("outer", "gone", true)]);
+		let (status, code) = error_code(&router, &mut chat_request("outer", &[])).await;
+		assert_eq!(status, ::http::StatusCode::NOT_FOUND);
+		assert_eq!(code, "virtual_model_target_not_found");
 	}
 
 	#[test]

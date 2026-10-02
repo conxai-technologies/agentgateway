@@ -456,6 +456,7 @@ pub struct LocalLLMConfig {
 	/// virtualModels defines a set of models that can be served from the gateway. The model name refers to the
 	/// model in the users request that is matched. However, unlike the `models` field, virtual models will
 	/// dynamically route to a specific model (configured in `models`) based on the configured logic.
+	/// A target may also name another virtual model, up to 4 virtual models deep; cycles are rejected.
 	#[serde(
 		default,
 		rename = "virtualModels",
@@ -550,7 +551,8 @@ pub struct LocalLLMWeightedRouting {
 
 #[apply(schema_de!)]
 pub struct LocalLLMWeightedTarget {
-	/// model is resolved against llm.models using the same wildcard matching as client requests.
+	/// model names another virtual model, or is resolved against llm.models using the same wildcard
+	/// matching as client requests.
 	model: String,
 	/// Relative proportion of traffic sent to this target model. Defaults to 1.
 	#[serde(default = "default_weight")]
@@ -565,7 +567,8 @@ pub struct LocalLLMFailoverRouting {
 
 #[apply(schema_de!)]
 pub struct LocalLLMFailoverTarget {
-	/// model is resolved against llm.models using the same wildcard matching as client requests.
+	/// model names another failover virtual model, whose priority groups are merged into this target's
+	/// priority, or is resolved against llm.models using the same wildcard matching as client requests.
 	model: String,
 	/// priority groups targets for failover. Lower values are preferred.
 	priority: usize,
@@ -582,7 +585,8 @@ pub struct LocalLLMConditionalTarget {
 	/// when must evaluate to true for this target to be selected. Omit only on the final fallback target.
 	#[serde(default)]
 	when: Option<Arc<cel::Expression>>,
-	/// model is resolved against llm.models using the same wildcard matching as client requests.
+	/// model names another virtual model, or is resolved against llm.models using the same wildcard
+	/// matching as client requests.
 	model: String,
 }
 
@@ -4176,6 +4180,68 @@ fn llm_model_matches(pattern: &str, model: &str) -> anyhow::Result<bool> {
 	Ok(pattern == model)
 }
 
+/// Returns the virtual model a target refers to. A target naming its own virtual model keeps
+/// referring to `llm.models`, so a virtual model can shadow a concrete model of the same name.
+fn nested_virtual_model<'a>(
+	virtual_models: &'a [LocalLLMVirtualModel],
+	from: &str,
+	target: &str,
+) -> Option<&'a LocalLLMVirtualModel> {
+	if target == from {
+		return None;
+	}
+	virtual_models.iter().find(|model| model.name == target)
+}
+
+/// Expands a failover virtual model into priority tiers of concrete model names. A target naming
+/// another failover virtual model is replaced by that model's tiers: its first tier joins the
+/// target's priority, and its later tiers are tried after it. Models already reached through an
+/// earlier tier are not added again.
+fn failover_tiers<'a>(
+	virtual_models: &'a [LocalLLMVirtualModel],
+	name: &str,
+	failover: &'a LocalLLMFailoverRouting,
+) -> Vec<Vec<&'a str>> {
+	let mut tiers: Vec<Vec<(&str, bool)>> = Vec::new();
+	for (_, targets) in &failover
+		.targets
+		.iter()
+		.sorted_by_key(|target| target.priority)
+		.chunk_by(|target| target.priority)
+	{
+		let mut level: Vec<Vec<(&str, bool)>> = Vec::new();
+		for target in targets {
+			let nested = nested_virtual_model(virtual_models, name, &target.model);
+			let expanded = match nested.and_then(|nested| nested.routing.failover.as_ref()) {
+				Some(failover) => failover_tiers(virtual_models, &target.model, failover)
+					.into_iter()
+					.map(|tier| tier.into_iter().map(|model| (model, true)).collect())
+					.collect(),
+				None => vec![vec![(target.model.as_str(), false)]],
+			};
+			for (idx, tier) in expanded.into_iter().enumerate() {
+				if level.len() <= idx {
+					level.push(Vec::new());
+				}
+				level[idx].extend(tier);
+			}
+		}
+		tiers.extend(level);
+	}
+	let mut seen = HashSet::new();
+	tiers
+		.into_iter()
+		.map(|tier| {
+			tier
+				.into_iter()
+				.filter(|(model, nested)| seen.insert(*model) || !nested)
+				.map(|(model, _)| model)
+				.collect_vec()
+		})
+		.filter(|tier| !tier.is_empty())
+		.collect()
+}
+
 impl<'a> LocalLLMVirtualRoutingStrategy<'a> {
 	fn targets(&self) -> Box<dyn Iterator<Item = &'a str> + 'a> {
 		match self {
@@ -4291,12 +4357,57 @@ impl LocalLLMModelRegistry {
 
 	fn validate_virtual_models(&self) -> anyhow::Result<()> {
 		for virtual_model in &self.virtual_models {
-			for target in virtual_model.routing_strategy()?.targets() {
-				if !self.model_matches(target)? {
+			let strategy = virtual_model.routing_strategy()?;
+			let failover = matches!(strategy, LocalLLMVirtualRoutingStrategy::Failover(_));
+			for target in strategy.targets() {
+				let nested = nested_virtual_model(&self.virtual_models, &virtual_model.name, target);
+				if let Some(nested) = nested {
+					// Failover is compiled into one backend, so it cannot defer to a per-request choice.
+					if failover && nested.routing.failover.is_none() {
+						bail!(
+							"virtual model {} failover target {target} must be an llm.models entry or a failover virtual model",
+							virtual_model.name
+						);
+					}
+				} else if !self.model_matches(target)? {
 					bail!("virtual model target {target} does not match any llm.models entry");
 				}
 			}
 		}
+		for virtual_model in &self.virtual_models {
+			self.validate_virtual_model_chain(virtual_model, &mut Vec::new())?;
+		}
+		Ok(())
+	}
+
+	/// Rejects cycles between virtual models and chains deeper than the router will follow.
+	fn validate_virtual_model_chain<'a>(
+		&'a self,
+		virtual_model: &'a LocalLLMVirtualModel,
+		chain: &mut Vec<&'a str>,
+	) -> anyhow::Result<()> {
+		if let Some(start) = chain.iter().position(|name| *name == virtual_model.name) {
+			bail!(
+				"virtual model cycle detected: {} -> {}",
+				chain[start..].join(" -> "),
+				virtual_model.name
+			);
+		}
+		chain.push(&virtual_model.name);
+		if chain.len() > llm::model_router::MAX_VIRTUAL_MODEL_DEPTH {
+			bail!(
+				"virtual model chain {} exceeds the maximum nesting depth of {}",
+				chain.join(" -> "),
+				llm::model_router::MAX_VIRTUAL_MODEL_DEPTH
+			);
+		}
+		for target in virtual_model.routing_strategy()?.targets() {
+			let nested = nested_virtual_model(&self.virtual_models, &virtual_model.name, target);
+			if let Some(nested) = nested {
+				self.validate_virtual_model_chain(nested, chain)?;
+			}
+		}
+		chain.pop();
 		Ok(())
 	}
 
@@ -4708,12 +4819,17 @@ async fn convert_llm_config(
 
 	let virtual_models = llm_registry.into_virtual_models();
 	let mut router_virtual_models = Vec::new();
-	for (idx, virtual_model) in virtual_models.into_iter().enumerate() {
+	for (idx, virtual_model) in virtual_models.iter().enumerate() {
 		let llm_policy = Arc::default();
+		// Targets naming another virtual model are resolved by the router for each request.
+		let nested =
+			|target: &str| nested_virtual_model(&virtual_models, &virtual_model.name, target).is_some();
 		let routing = match virtual_model.routing_strategy()? {
 			LocalLLMVirtualRoutingStrategy::Conditional(conditional) => {
 				for target in &conditional.targets {
-					resolved_models.resolve(&target.model)?;
+					if !nested(&target.model) {
+						resolved_models.resolve(&target.model)?;
+					}
 				}
 				llm::model_router::VirtualModelRouting::Conditional(
 					conditional
@@ -4723,13 +4839,16 @@ async fn convert_llm_config(
 							model: target.model.clone(),
 							when: target.when.clone(),
 							invalid: false,
+							virtual_model: nested(&target.model),
 						})
 						.collect(),
 				)
 			},
 			LocalLLMVirtualRoutingStrategy::Weighted(weighted) => {
 				for target in &weighted.targets {
-					resolved_models.resolve(&target.model)?;
+					if !nested(&target.model) {
+						resolved_models.resolve(&target.model)?;
+					}
 				}
 				llm::model_router::VirtualModelRouting::Weighted(
 					weighted
@@ -4739,28 +4858,27 @@ async fn convert_llm_config(
 							model: target.model.clone(),
 							weight: target.weight,
 							invalid: false,
+							virtual_model: nested(&target.model),
 						})
 						.collect(),
 				)
 			},
 			LocalLLMVirtualRoutingStrategy::Failover(failover) => {
-				let provider_groups = failover
-					.targets
-					.iter()
-					.sorted_by_key(|target| target.priority)
-					.chunk_by(|target| target.priority)
+				// Nested failover virtual models are flattened into this backend's priority groups.
+				let provider_groups = failover_tiers(&virtual_models, &virtual_model.name, failover)
 					.into_iter()
-					.map(|(_, targets)| {
+					.map(|targets| {
 						targets
+							.into_iter()
 							.map(|target| {
-								let resolved = resolved_models.resolve(&target.model)?;
+								let resolved = resolved_models.resolve(target)?;
 								let mut provider = resolved.provider.clone();
-								provider.name = strng::new(&target.model);
-								ensure_ai_provider_model(&mut provider.provider, &target.model);
+								provider.name = strng::new(target);
+								ensure_ai_provider_model(&mut provider.provider, target);
 								provider
 									.inline_policies
 									.extend(resolved.inline_policies.clone());
-								Ok((strng::new(&target.model), provider))
+								Ok((strng::new(target), provider))
 							})
 							.collect::<anyhow::Result<Vec<_>>>()
 					})
@@ -4785,7 +4903,7 @@ async fn convert_llm_config(
 			},
 		};
 		router_virtual_models.push(llm::model_router::VirtualModelRoute {
-			name: virtual_model.name,
+			name: virtual_model.name.clone(),
 			created: startup_timestamp,
 			llm_policy,
 			routing,

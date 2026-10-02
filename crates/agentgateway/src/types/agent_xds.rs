@@ -1753,6 +1753,7 @@ impl ModelRoute {
 									model: target.model.clone(),
 									weight: target.weight as usize,
 									invalid: target.invalid,
+									virtual_model: false,
 								})
 								.collect(),
 						)
@@ -1781,6 +1782,7 @@ impl ModelRoute {
 									)
 								}),
 								invalid: target.invalid,
+								virtual_model: false,
 							});
 						}
 						llm::model_router::VirtualModelRouting::Conditional(targets)

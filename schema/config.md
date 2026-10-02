@@ -84774,21 +84774,21 @@
 |`llm.models[].matches[].headers[].value`|object|Exact or regex pattern the header value must match.<br>Exactly one of exact or regex may be set.|
 |`llm.models[].matches[].headers[].value.exact`|string||
 |`llm.models[].matches[].headers[].value.regex`|string||
-|`llm.virtualModels`|[]object|virtualModels defines a set of models that can be served from the gateway. The model name refers to the<br>model in the users request that is matched. However, unlike the `models` field, virtual models will<br>dynamically route to a specific model (configured in `models`) based on the configured logic.|
+|`llm.virtualModels`|[]object|virtualModels defines a set of models that can be served from the gateway. The model name refers to the<br>model in the users request that is matched. However, unlike the `models` field, virtual models will<br>dynamically route to a specific model (configured in `models`) based on the configured logic.<br>A target may also name another virtual model, up to 4 virtual models deep; cycles are rejected.|
 |`llm.virtualModels[].name`|string|name is the public model name clients request.|
 |`llm.virtualModels[].routing`|object|routing selects an existing LLM model backend for each request.|
 |`llm.virtualModels[].routing.weighted`|object|weighted enables weight-based selection of the target model.|
 |`llm.virtualModels[].routing.weighted.targets`|[]object|targets are existing model names or names matched by wildcard model entries.|
-|`llm.virtualModels[].routing.weighted.targets[].model`|string|model is resolved against llm.models using the same wildcard matching as client requests.|
+|`llm.virtualModels[].routing.weighted.targets[].model`|string|model names another virtual model, or is resolved against llm.models using the same wildcard<br>matching as client requests.|
 |`llm.virtualModels[].routing.weighted.targets[].weight`|integer|Relative proportion of traffic sent to this target model. Defaults to 1.|
 |`llm.virtualModels[].routing.failover`|object|failover enables priority-based selection of the target model.<br>Within a priority level, the best provider is selected by a composite score factoring in health<br>and latency.<br>If all models within a priority level are degraded, requests will move onto the next priority group.|
 |`llm.virtualModels[].routing.failover.targets`|[]object|targets are grouped by priority. Lower priority values are tried first.|
-|`llm.virtualModels[].routing.failover.targets[].model`|string|model is resolved against llm.models using the same wildcard matching as client requests.|
+|`llm.virtualModels[].routing.failover.targets[].model`|string|model names another failover virtual model, whose priority groups are merged into this target's<br>priority, or is resolved against llm.models using the same wildcard matching as client requests.|
 |`llm.virtualModels[].routing.failover.targets[].priority`|integer|priority groups targets for failover. Lower values are preferred.|
 |`llm.virtualModels[].routing.conditional`|object|Conditional enables condition-based selection of the target model. Each condition is evaluated<br>in order until the best match is found.|
 |`llm.virtualModels[].routing.conditional.targets`|[]object|targets are evaluated in order. The first matching condition selects the model.|
 |`llm.virtualModels[].routing.conditional.targets[].when`|string|when must evaluate to true for this target to be selected. Omit only on the final fallback target.|
-|`llm.virtualModels[].routing.conditional.targets[].model`|string|model is resolved against llm.models using the same wildcard matching as client requests.|
+|`llm.virtualModels[].routing.conditional.targets[].model`|string|model names another virtual model, or is resolved against llm.models using the same wildcard<br>matching as client requests.|
 |`llm.policies`|object|policies defines policies for handling incoming requests, before a model is selected|
 |`llm.policies.oidc`|object|Authenticate browser requests with OIDC authorization code flow.|
 |`llm.policies.oidc.issuer`|string|Issuer used for discovery and ID token validation.|
