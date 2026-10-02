@@ -41,6 +41,8 @@
 |`config.database`|object|Primary database used by local runtime features.|
 |`config.database.url`|string|Connection URL for the request log database. A postgres:// or postgresql:// URL uses Postgres; any other value is treated as a SQLite database.|
 |`config.database.maxConnections`|integer|Maximum number of connections to open in this database's connection pool. Defaults to 5.<br>When the request log and config stores have matching database settings, they share one pool<br>with this limit.|
+|`config.database.required`|boolean|Whether the request log database must be available at startup. Defaults to true: startup<br>fails if the database cannot be connected to or its schema cannot be created.<br>When false, the gateway starts serving immediately and connects in the background, retrying<br>with exponential backoff. Until then records are queued in memory (see `maxQueuedRecords`)<br>and log queries fail. Only supported on `config.logging.database`: the primary database<br>backs budgets and the config store and is always required, so a request log that shares it<br>still needs it at startup.|
+|`config.database.maxQueuedRecords`|integer|Maximum number of request log records held in memory waiting to be written to the<br>database. When the queue is full, new records are dropped and counted in<br>`agentgateway_log_store_dropped_records_total`. Unbounded when unset.|
 |`config.storage`|object|Controls whether UI-managed configuration is written to the config file or a DB overlay.|
 |`config.storage.mode`|enum|Possible values: `file`, `hybrid`, `readOnly`.|
 |`config.caAddress`|string|Address of the Certificate Authority used to issue SPIFFE certificates.|
@@ -93,6 +95,8 @@
 |`config.logging.database`|object|Log-store database configuration; enables request logging to a database backend.|
 |`config.logging.database.url`|string|Connection URL for the request log database. A postgres:// or postgresql:// URL uses Postgres; any other value is treated as a SQLite database.|
 |`config.logging.database.maxConnections`|integer|Maximum number of connections to open in this database's connection pool. Defaults to 5.<br>When the request log and config stores have matching database settings, they share one pool<br>with this limit.|
+|`config.logging.database.required`|boolean|Whether the request log database must be available at startup. Defaults to true: startup<br>fails if the database cannot be connected to or its schema cannot be created.<br>When false, the gateway starts serving immediately and connects in the background, retrying<br>with exponential backoff. Until then records are queued in memory (see `maxQueuedRecords`)<br>and log queries fail. Only supported on `config.logging.database`: the primary database<br>backs budgets and the config store and is always required, so a request log that shares it<br>still needs it at startup.|
+|`config.logging.database.maxQueuedRecords`|integer|Maximum number of request log records held in memory waiting to be written to the<br>database. When the queue is full, new records are dropped and counted in<br>`agentgateway_log_store_dropped_records_total`. Unbounded when unset.|
 |`config.metrics`|object|Metrics configuration, including metric removal and custom fields.|
 |`config.metrics.remove`|[]string|Metric names to exclude from collection.|
 |`config.metrics.fields`|object|Custom fields to add to all metrics.|

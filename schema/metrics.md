@@ -64,5 +64,8 @@
 | `agentgateway_atenet_router_route_duration_seconds` | Histogram | seconds | Time from receiving a Substrate request to resolving its worker endpoint. |
 | `agentgateway_build_info` | Info | — | Agentgateway build information. |
 | `agentgateway_config_synchronized` | Gauge | — | Whether the last configuration load/reload was successful or not, being synchronized with the on-disk configuration. |
+| `agentgateway_log_store_dropped_records_total` | Counter | — | Request log records that were not written to the database, by reason (QueueFull, WriteFailed, Shutdown). |
+| `agentgateway_log_store_queued_records` | Gauge | — | Number of request log records waiting to be written to the database. |
+| `agentgateway_log_store_unavailable` | Gauge | — | 1 while the request log database is unreachable (its last connect or write failed), 0 otherwise. |
 | `agentgateway_substrate_request_parking_active` | Gauge | — | Number of requests waiting for a Substrate actor to become routable. |
 | `agentgateway_upstream_call_duration_seconds` | Histogram | seconds | Duration of outbound calls made by agentgateway (seconds). |

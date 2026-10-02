@@ -469,6 +469,23 @@ impl Metrics {
 			gen_ai_inter_chunk_latency.clone(),
 		);
 
+		let log_store = &crate::telemetry::log_store::METRICS;
+		registry.register(
+			"log_store_unavailable",
+			"1 while the request log database is unreachable (its last connect or write failed), 0 otherwise",
+			log_store.unavailable.clone(),
+		);
+		registry.register(
+			"log_store_queued_records",
+			"Number of request log records waiting to be written to the database",
+			log_store.queued_records.clone(),
+		);
+		registry.register(
+			"log_store_dropped_records",
+			"Request log records that were not written to the database, by reason (QueueFull, WriteFailed, Shutdown)",
+			log_store.dropped_records.clone(),
+		);
+
 		Metrics {
 			substrate_request_parking_active: {
 				let m = Gauge::default();
