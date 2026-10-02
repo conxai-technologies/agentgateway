@@ -412,6 +412,26 @@ pub fn parse_config(
 	{
 		anyhow::bail!("config.logging.database.maxConnections must be greater than zero");
 	}
+	if database
+		.as_ref()
+		.is_some_and(|database| database.required == Some(false))
+	{
+		anyhow::bail!(
+			"config.database.required=false is not supported: budgets and the config store need the primary database at startup; set config.logging.database.required instead"
+		);
+	}
+	if database
+		.as_ref()
+		.is_some_and(|database| database.max_queued_records == Some(0))
+	{
+		anyhow::bail!("config.database.maxQueuedRecords must be greater than zero");
+	}
+	if explicit_logging_database
+		.as_ref()
+		.is_some_and(|database| database.max_queued_records == Some(0))
+	{
+		anyhow::bail!("config.logging.database.maxQueuedRecords must be greater than zero");
+	}
 	let logging_database = explicit_logging_database.or_else(|| database.clone());
 
 	let mut storage_mode = raw.storage.clone().unwrap_or_default().mode;
@@ -1523,6 +1543,70 @@ config:
 			err
 				.to_string()
 				.contains("maxConnections must be at least 2 for PostgreSQL hybrid storage")
+		);
+	}
+
+	#[test]
+	fn logging_database_can_be_optional_at_startup() {
+		let _env_lock = lock_env();
+		let config = parse_config(
+			r#"
+config:
+  database:
+    url: "postgres://config.example/database"
+  logging:
+    database:
+      url: "postgres://config.example/database"
+      required: false
+      maxQueuedRecords: 1000
+"#
+			.to_string(),
+			None,
+		)
+		.expect("optional logging database should parse");
+		let database = config.database.as_ref().expect("primary database");
+		let logging_database = config.logging.database.as_ref().expect("logging database");
+		assert!(database.is_required());
+		assert!(!logging_database.is_required());
+		assert_eq!(logging_database.max_queued_records, Some(1000));
+		// Startup options do not split the connection pool.
+		assert!(logging_database.same_pool(database));
+
+		let err = parse_config(
+			r#"
+config:
+  database:
+    url: "sqlite::memory:"
+    required: false
+"#
+			.to_string(),
+			None,
+		)
+		.expect_err("primary database is always required");
+		assert!(
+			err
+				.to_string()
+				.contains("config.database.required=false is not supported"),
+			"unexpected error: {err}"
+		);
+
+		let err = parse_config(
+			r#"
+config:
+  logging:
+    database:
+      url: "sqlite::memory:"
+      maxQueuedRecords: 0
+"#
+			.to_string(),
+			None,
+		)
+		.expect_err("zero-sized queue should fail");
+		assert!(
+			err
+				.to_string()
+				.contains("config.logging.database.maxQueuedRecords must be greater than zero"),
+			"unexpected error: {err}"
 		);
 	}
 

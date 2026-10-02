@@ -754,6 +754,24 @@
           "format": "uint32",
           "minimum": 1,
           "default": null
+        },
+        "required": {
+          "description": "Whether the request log database must be available at startup. Defaults to true: startup\nfails if the database cannot be connected to or its schema cannot be created.\nWhen false, the gateway starts serving immediately and connects in the background, retrying\nwith exponential backoff. Until then records are queued in memory (see `maxQueuedRecords`)\nand log queries fail. Only supported on `config.logging.database`: the primary database\nbacks budgets and the config store and is always required, so a request log that shares it\nstill needs it at startup.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "maxQueuedRecords": {
+          "description": "Maximum number of request log records held in memory waiting to be written to the\ndatabase. When the queue is full, new records are dropped and counted in\n`agentgateway_log_store_dropped_records_total`. Unbounded when unset.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 1,
+          "default": null
         }
       },
       "additionalProperties": false,

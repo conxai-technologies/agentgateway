@@ -84,7 +84,7 @@ pub(crate) fn execute(args: RunArgs) -> anyhow::Result<()> {
 					let pool = config
 						.database
 						.as_ref()
-						.filter(|database| cfg == *database)
+						.filter(|database| cfg.same_pool(database))
 						.and(database_pool.clone());
 					match agentgateway::telemetry::log_store::setup_with_pool(cfg, pool).await {
 						Ok(store) => Some(store),
