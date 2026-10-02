@@ -876,7 +876,8 @@ pub struct LocalLLMModels {
 	matches: Vec<LLMRouteMatch>,
 	/// capacity declares the limits the upstream enforces for this model, per minute. Virtual model
 	/// failover prefers targets with more remaining headroom and skips targets without headroom
-	/// while another target at the same priority has some. Usage is tracked per replica.
+	/// while another target at the same priority has some. Usage is shared across replicas through
+	/// `config.database` when one is configured.
 	capacity: Option<llm::capacity::ProviderCapacity>,
 }
 
@@ -1631,7 +1632,8 @@ pub struct LocalNamedAIProvider {
 	pub policies: Option<LocalBackendPolicies>,
 	/// Limits the upstream enforces for this provider, per minute. Providers with more remaining
 	/// headroom are preferred, and providers without headroom are skipped while another provider
-	/// in the same group has some. Usage is tracked per replica.
+	/// in the same group has some. Usage is shared across replicas through `config.database` when
+	/// one is configured.
 	pub capacity: Option<llm::capacity::ProviderCapacity>,
 }
 
@@ -1679,7 +1681,7 @@ impl LocalAIBackend {
 				};
 				let capacity = p
 					.capacity
-					.map(|c| llm::capacity::CapacityTracker::new(c, backend_name, &p.name))
+					.map(|c| llm::capacity::registry().tracker(c, backend_name, &p.name))
 					.transpose()?
 					.map(Arc::new);
 				group.push((
@@ -4772,7 +4774,7 @@ async fn convert_llm_config(
 		let capacity = model_config
 			.capacity
 			.clone()
-			.map(|c| llm::capacity::CapacityTracker::new(c, &backend_key, &model_config.name))
+			.map(|c| llm::capacity::registry().tracker(c, &backend_key, &model_config.name))
 			.transpose()?
 			.map(Arc::new);
 		let named_provider = NamedAIProvider {

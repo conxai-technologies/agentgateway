@@ -61,7 +61,9 @@ pub(crate) fn execute(args: RunArgs) -> anyhow::Result<()> {
 				None => None,
 			};
 			if let Some(pool) = database_pool.clone() {
-				config.budget_policy.initialize(pool).await?;
+				config.budget_policy.initialize(pool.clone()).await?;
+				// Best effort: capacity usage falls back to local estimates while the database is down.
+				agentgateway::llm::capacity::registry().attach(pool);
 			}
 			let config_resource_store = if config.storage.mode == ConfigStoreMode::Hybrid {
 				Some(
@@ -96,6 +98,12 @@ pub(crate) fn execute(args: RunArgs) -> anyhow::Result<()> {
 			let result = proxy(config.clone(), config_resource_store).await;
 			if let Err(err) = config.budget_policy.flush().await {
 				error!(?err, "failed to flush budget usage during shutdown");
+			}
+			if let Err(err) = agentgateway::llm::capacity::registry().flush().await {
+				error!(
+					?err,
+					"failed to flush provider capacity usage during shutdown"
+				);
 			}
 			if let Some(request_log_store) = request_log_store {
 				request_log_store.shutdown_and_wait().await;

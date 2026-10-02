@@ -9110,7 +9110,7 @@
           ]
         },
         "capacity": {
-          "description": "Limits the upstream enforces for this provider, per minute. Providers with more remaining\nheadroom are preferred, and providers without headroom are skipped while another provider\nin the same group has some. Usage is tracked per replica.",
+          "description": "Limits the upstream enforces for this provider, per minute. Providers with more remaining\nheadroom are preferred, and providers without headroom are skipped while another provider\nin the same group has some. Usage is shared across replicas through `config.database` when\none is configured.",
           "anyOf": [
             {
               "$ref": "#/$defs/ProviderCapacity"
@@ -9912,6 +9912,15 @@
             "null"
           ],
           "format": "uint64",
+          "minimum": 0
+        },
+        "expectedReplicas": {
+          "description": "Number of gateway replicas sending traffic against these limits, used while usage is not\nshared through `config.database` (no database configured, or no successful sync in the\nlast 15 seconds). Each replica then allows itself `1 / expectedReplicas` of every limit.\nWhile usage is shared, replicas count each other's traffic and the full limits apply.\nDefaults to 1.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
           "minimum": 0
         }
       },
@@ -12773,7 +12782,7 @@
           }
         },
         "capacity": {
-          "description": "capacity declares the limits the upstream enforces for this model, per minute. Virtual model\nfailover prefers targets with more remaining headroom and skips targets without headroom\nwhile another target at the same priority has some. Usage is tracked per replica.",
+          "description": "capacity declares the limits the upstream enforces for this model, per minute. Virtual model\nfailover prefers targets with more remaining headroom and skips targets without headroom\nwhile another target at the same priority has some. Usage is shared across replicas through\n`config.database` when one is configured.",
           "anyOf": [
             {
               "$ref": "#/$defs/ProviderCapacity"

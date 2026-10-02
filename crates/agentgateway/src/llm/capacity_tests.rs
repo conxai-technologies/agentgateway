@@ -9,6 +9,7 @@ fn limits(rpm: Option<u64>, input_tpm: Option<u64>, output_tpm: Option<u64>) -> 
 		rpm,
 		input_tpm,
 		output_tpm,
+		expected_replicas: None,
 	}
 }
 
@@ -83,12 +84,15 @@ fn rejects_empty_or_zero_capacity() {
 	assert!(CapacityTracker::new(limits(None, None, None), "b", "p").is_err());
 	assert!(CapacityTracker::new(limits(Some(0), None, None), "b", "p").is_err());
 	assert!(CapacityTracker::new(limits(None, Some(10), Some(0)), "b", "p").is_err());
+	let mut no_replicas = limits(Some(10), None, None);
+	no_replicas.expected_replicas = Some(0);
+	assert!(CapacityTracker::new(no_replicas, "b", "p").is_err());
 }
 
 #[test]
 fn sliding_window_charges_requests_and_expires_them() {
 	let t = tracker(limits(Some(10), None, None));
-	let t0 = t.origin;
+	let t0 = t.origin();
 	charge_requests(&t, 5, t0);
 	assert_close(t.headroom_at(t0), 0.5);
 	assert_close(t.headroom_at(t0 + Duration::from_secs(30)), 0.5);
@@ -100,7 +104,7 @@ fn sliding_window_charges_requests_and_expires_them() {
 #[test]
 fn headroom_is_the_minimum_over_dimensions_and_clamped() {
 	let t = tracker(limits(Some(100), Some(1000), Some(100)));
-	let t0 = t.origin;
+	let t0 = t.origin();
 	t.admit_at(t0).settle_at(t0, Some(200), Some(90));
 	// requests 0.99, input 0.8, output 0.1
 	assert_close(t.headroom_at(t0), 0.1);
@@ -111,7 +115,7 @@ fn headroom_is_the_minimum_over_dimensions_and_clamped() {
 #[test]
 fn tokens_are_charged_on_settle_and_projected_while_in_flight() {
 	let t = tracker(limits(None, Some(1000), None));
-	let t0 = t.origin;
+	let t0 = t.origin();
 	let first = t.admit_at(t0);
 	// No usage known yet: an in-flight request costs nothing.
 	assert_close(t.headroom_at(t0), 1.0);
@@ -127,7 +131,7 @@ fn tokens_are_charged_on_settle_and_projected_while_in_flight() {
 #[test]
 fn openai_headers_correct_the_estimate_and_fade() {
 	let t = tracker(limits(Some(100), None, None));
-	let t0 = t.origin;
+	let t0 = t.origin();
 	let mut permit = t.admit_at(t0);
 	let mut headers = HeaderMap::new();
 	headers.insert(
@@ -152,7 +156,7 @@ fn openai_headers_correct_the_estimate_and_fade() {
 #[test]
 fn headers_can_lower_the_estimate() {
 	let t = tracker(limits(Some(100), None, None));
-	let t0 = t.origin;
+	let t0 = t.origin();
 	charge_requests(&t, 49, t0);
 	let mut permit = t.admit_at(t0);
 	let mut headers = HeaderMap::new();
@@ -169,7 +173,7 @@ fn headers_can_lower_the_estimate() {
 #[test]
 fn anthropic_headers_correct_token_dimensions() {
 	let t = tracker(limits(None, Some(10_000), Some(1_000)));
-	let t0 = t.origin;
+	let t0 = t.origin();
 	let mut permit = t.admit_at(t0);
 	let mut headers = HeaderMap::new();
 	headers.insert(
@@ -366,7 +370,7 @@ async fn parses_capacity_config() {
 		"groups": [
 			{
 				"providers": [
-					{"name": "a", "provider": openai, "capacity": {"rpm": 10, "inputTpm": 1000}},
+					{"name": "a", "provider": openai, "capacity": {"rpm": 10, "inputTpm": 1000, "expectedReplicas": 2}},
 					{"name": "b", "provider": openai},
 				],
 				"reserveForHighPriority": 0.4,
@@ -382,6 +386,7 @@ async fn parses_capacity_config() {
 	assert_eq!(policy.reserve_for_high_priority, vec![Some(0.4), None]);
 	let a = tracker_of(&backend, "a");
 	assert_eq!(a.limits, [Some(10), Some(1000), None]);
+	assert_close(a.local_share, 0.5);
 
 	// A provider without capacity and no shedding keeps the plain selection path.
 	let plain = parse(serde_json::json!({"name": "a", "provider": openai}))
@@ -420,4 +425,161 @@ fn shed_response_is_a_429_with_retry_after() {
 		.into_response_with_grpc(false);
 	assert_eq!(resp.status(), ::http::StatusCode::TOO_MANY_REQUESTS);
 	assert_eq!(resp.headers()[::http::header::RETRY_AFTER], "7");
+}
+
+fn replica(clock: Clock) -> Arc<CapacityRegistry> {
+	Arc::new(CapacityRegistry::new(clock))
+}
+
+fn shared_tracker(registry: &CapacityRegistry, capacity: ProviderCapacity) -> Arc<CapacityTracker> {
+	Arc::new(registry.tracker(capacity, "backend", "provider").unwrap())
+}
+
+async fn database() -> (crate::database::DatabasePool, sqlx::SqlitePool) {
+	let sqlite = sqlx::sqlite::SqlitePoolOptions::new()
+		.max_connections(1)
+		.connect("sqlite::memory:")
+		.await
+		.unwrap();
+	let pool = crate::database::DatabasePool::Sqlite(sqlite.clone());
+	store::ensure_schema(&pool).await.unwrap();
+	(pool, sqlite)
+}
+
+async fn count_rows(sqlite: &sqlx::SqlitePool) -> i64 {
+	sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM capacity_usage")
+		.fetch_one(sqlite)
+		.await
+		.unwrap()
+}
+
+#[tokio::test]
+async fn replicas_converge_through_the_database() {
+	let (db, _) = database().await;
+	let clock = Clock::aligned();
+	let (a, b) = (replica(clock), replica(clock));
+	let ta = shared_tracker(&a, limits(Some(100), Some(1000), None));
+	let tb = shared_tracker(&b, limits(Some(100), Some(1000), None));
+	let t0 = clock.origin;
+	charge_requests(&ta, 30, t0);
+	charge_requests(&tb, 20, t0);
+	// Before a sync, each replica only knows its own traffic.
+	assert_close(ta.headroom_at(t0), 0.7);
+	a.sync_at(&db, t0).await.unwrap();
+	b.sync_at(&db, t0).await.unwrap();
+	// b has read a's usage; a has not seen b's yet.
+	assert_close(tb.headroom_at(t0), 0.5);
+	assert_close(ta.headroom_at(t0), 0.7);
+	a.sync_at(&db, t0).await.unwrap();
+	assert_close(ta.headroom_at(t0), 0.5);
+
+	// Later usage arrives with the next syncs, and repeated syncs do not count anything twice.
+	let t1 = t0 + Duration::from_secs(5);
+	charge_requests(&tb, 10, t1);
+	for _ in 0..2 {
+		b.sync_at(&db, t1).await.unwrap();
+		a.sync_at(&db, t1).await.unwrap();
+	}
+	assert_close(ta.headroom_at(t1), 0.4);
+	assert_close(tb.headroom_at(t1), 0.4);
+	// Tokens are shared the same way.
+	tb.admit_at(t1).settle_at(t1, Some(700), None);
+	b.sync_at(&db, t1).await.unwrap();
+	a.sync_at(&db, t1).await.unwrap();
+	assert_close(ta.headroom_at(t1), 0.3);
+}
+
+#[tokio::test]
+async fn a_crashed_replicas_usage_expires_with_its_slots() {
+	let (db, sqlite) = database().await;
+	let clock = Clock::aligned();
+	let a = replica(clock);
+	let ta = shared_tracker(&a, limits(Some(100), None, None));
+	let t0 = clock.origin;
+	{
+		let b = replica(clock);
+		let tb = shared_tracker(&b, limits(Some(100), None, None));
+		charge_requests(&tb, 40, t0);
+		b.sync_at(&db, t0).await.unwrap();
+		// b crashes here and never writes again.
+	}
+	a.sync_at(&db, t0).await.unwrap();
+	assert_close(ta.headroom_at(t0), 0.6);
+	let at = |ms: u64| t0 + Duration::from_millis(ms);
+	a.sync_at(&db, at(30_000)).await.unwrap();
+	assert_close(ta.headroom_at(at(30_000)), 0.6);
+	// b's slot is half outside the window, then fully.
+	a.sync_at(&db, at(62_500)).await.unwrap();
+	assert_close(ta.headroom_at(at(62_500)), 0.8);
+	a.sync_at(&db, at(65_000)).await.unwrap();
+	assert_close(ta.headroom_at(at(65_000)), 1.0);
+	// Its rows are deleted after two windows.
+	assert_eq!(count_rows(&sqlite).await, 1);
+	a.sync_at(&db, at(125_000)).await.unwrap();
+	assert_eq!(count_rows(&sqlite).await, 0);
+}
+
+#[tokio::test]
+async fn database_unavailable_falls_back_to_local_estimates() {
+	let (db, sqlite) = database().await;
+	let clock = Clock::aligned();
+	let a = replica(clock);
+	let mut capacity = limits(Some(100), None, None);
+	capacity.expected_replicas = Some(2);
+	let ta = shared_tracker(&a, capacity);
+	let t0 = clock.origin;
+	charge_requests(&ta, 10, t0);
+	// Not shared yet: this replica keeps to its share of the limit.
+	assert!(!a.sync.shared_at(t0));
+	assert_close(ta.headroom_at(t0), 0.8);
+	a.sync_at(&db, t0).await.unwrap();
+	assert!(a.sync.shared_at(t0));
+	assert_close(ta.headroom_at(t0), 0.9);
+
+	sqlite.close().await;
+	let t = t0 + Duration::from_secs(5);
+	assert!(a.sync_at(&db, t).await.is_err());
+	assert!(store::ensure_schema(&db).await.is_err());
+	// The last sync still counts until it is 15 s old, then the local estimate takes over.
+	assert_close(ta.headroom_at(t0 + Duration::from_secs(15)), 0.9);
+	let t = t0 + Duration::from_secs(16);
+	assert!(!a.sync.shared_at(t));
+	assert_close(ta.headroom_at(t), 0.8);
+
+	// Attaching an unreachable database does not fail; the background sync reports it.
+	let failures = SYNC_METRICS.sync_failures.get();
+	let other = replica(Clock::aligned());
+	other.attach(db.clone());
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	assert!(!other.is_shared());
+	assert!(SYNC_METRICS.sync_failures.get() > failures);
+}
+
+#[tokio::test]
+async fn reload_keeps_the_counters() {
+	let fetcher = crate::resource_manager::ResourceFetcher::files_only();
+	let config = |rpm: u64| {
+		serde_json::from_value::<crate::types::local::LocalAIBackend>(serde_json::json!({
+			"name": "a", "provider": {"openAI": {}}, "capacity": {"rpm": rpm},
+		}))
+		.unwrap()
+	};
+	let first = config(10)
+		.translate("reload-keeps-counters", &fetcher)
+		.await
+		.unwrap();
+	charge_requests(&tracker_of(&first, "a"), 5, Instant::now());
+	drop(first);
+	// The reloaded config finds the same counters, and applies its new limit to them.
+	let second = config(20)
+		.translate("reload-keeps-counters", &fetcher)
+		.await
+		.unwrap();
+	assert_close(tracker_of(&second, "a").headroom(), 0.75);
+	// Another backend has counters of its own.
+	let other = config(10)
+		.translate("reload-keeps-counters-other", &fetcher)
+		.await
+		.unwrap();
+	assert_close(tracker_of(&other, "a").headroom(), 1.0);
 }
