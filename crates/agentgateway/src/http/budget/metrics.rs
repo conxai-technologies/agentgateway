@@ -94,7 +94,7 @@ impl BudgetCounter {
 		let expired = now >= self.window_end;
 		let used = if expired { Decimal::ZERO } else { self.amount };
 		let (window_start, window_end) = if expired {
-			budget_window(now, self.rolling).unwrap_or((self.window_start, self.window_end))
+			budget_window(now, &self.window).unwrap_or((self.window_start, self.window_end))
 		} else {
 			(self.window_start, self.window_end)
 		};
