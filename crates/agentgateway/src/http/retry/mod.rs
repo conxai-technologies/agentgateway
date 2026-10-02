@@ -38,6 +38,28 @@ pub struct Policy {
 	/// is retried when its status code is in `codes` *or* this expression evaluates to `true`.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub condition: Option<Arc<Expression>>,
+	/// Maximum request body size, in bytes, buffered in memory so the request can be replayed on a
+	/// retry. Requests with a larger body are sent once and not retried.
+	/// Defaults to 64KiB. Values above 32MiB are clamped to 32MiB.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub max_buffer_size: Option<usize>,
+}
+
+/// Request body bytes buffered for replay when `maxBufferSize` is unset.
+pub const DEFAULT_MAX_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Upper bound for `maxBufferSize`. Each in-flight retryable request may hold up to this many
+/// bytes, so the limit must stay bounded. It matches the default LLM request buffer limit:
+/// retrying an LLM request never needs more memory than parsing it already allows.
+pub const MAX_BUFFER_SIZE_LIMIT: usize = 32 * 1024 * 1024;
+
+impl Policy {
+	/// Returns the number of request body bytes to buffer for replay.
+	pub fn max_buffer_size(&self) -> usize {
+		self
+			.max_buffer_size
+			.map_or(DEFAULT_MAX_BUFFER_SIZE, |v| v.min(MAX_BUFFER_SIZE_LIMIT))
+	}
 }
 
 impl HasExpressions for Policy {
@@ -112,5 +134,28 @@ mod tests {
 		}))
 		.unwrap();
 		assert_eq!(pol.expressions().count(), 2);
+	}
+
+	#[test]
+	fn max_buffer_size_defaults_and_clamps() {
+		let parse = |v: serde_json::Value| -> Policy {
+			let mut pol = serde_json::json!({"attempts": 2, "codes": [503]});
+			if !v.is_null() {
+				pol["maxBufferSize"] = v;
+			}
+			serde_json::from_value(pol).unwrap()
+		};
+		assert_eq!(
+			parse(serde_json::Value::Null).max_buffer_size(),
+			DEFAULT_MAX_BUFFER_SIZE
+		);
+		assert_eq!(
+			parse(serde_json::json!(1048576)).max_buffer_size(),
+			1024 * 1024
+		);
+		assert_eq!(
+			parse(serde_json::json!(u64::MAX)).max_buffer_size(),
+			MAX_BUFFER_SIZE_LIMIT
+		);
 	}
 }

@@ -1112,8 +1112,11 @@ impl HTTPProxy {
 				}
 			});
 		}
-		const MAX_BUFFERED_BYTES: usize = 64 * 1024;
 		let retries = route_retry;
+		let max_buffered_bytes = retries.as_deref().map_or(
+			http::retry::DEFAULT_MAX_BUFFER_SIZE,
+			http::retry::Policy::max_buffer_size,
+		);
 
 		// LLM token rate limiting reuses the rate-limit policy selected above in the normal
 		// request-policy flow. Conditional rate-limit expressions are evaluated only once there;
@@ -1138,17 +1141,20 @@ impl HTTPProxy {
 			.and_then(|t| t.request_timeout);
 		let mut replay_state = None;
 		let body =
-			if attempts > 1 && http_body::Body::size_hint(&body).lower() <= MAX_BUFFERED_BYTES as u64 {
+			if attempts > 1 && http_body::Body::size_hint(&body).lower() <= max_buffered_bytes as u64 {
 				// If we are going to attempt a retry we will need to track the incoming bytes for replay
 				let (content, state) = body.into_replay_parts();
 				replay_state = Some(state);
 				Ok(
-					http::retry::ReplayBody::try_new(content, MAX_BUFFERED_BYTES)
+					http::retry::ReplayBody::try_new(content, max_buffered_bytes)
 						.expect("body size was checked before separating replay state"),
 				)
 			} else {
 				if attempts > 1 {
-					debug!("initial body is too large to retry, disabling retries");
+					debug!(
+						max_buffered_bytes,
+						"initial body is too large to retry, disabling retries"
+					);
 				}
 				Err(body)
 			};
@@ -3900,6 +3906,7 @@ mod tests {
 			precondition: None,
 			condition: condition
 				.map(|e| std::sync::Arc::new(crate::cel::Expression::new_strict(e).unwrap())),
+			max_buffer_size: None,
 		}
 	}
 
@@ -4433,6 +4440,47 @@ mod tests {
 				.count(),
 			1
 		);
+	}
+
+	// A body over the default 64KiB replay buffer is retried only when the policy raises the limit.
+	#[rstest::rstest]
+	#[case::default_limit_skips_retry(None, 503, 1)]
+	#[case::raised_limit_retries(Some(256 * 1024), 200, 2)]
+	#[tokio::test]
+	async fn retry_replays_body_up_to_max_buffer_size(
+		#[case] max_buffer_size: Option<usize>,
+		#[case] want_status: u16,
+		#[case] want_requests: usize,
+	) {
+		let mock = wiremock::MockServer::start().await;
+		Mock::given(wiremock::matchers::any())
+			.respond_with(ResponseTemplate::new(503))
+			.up_to_n_times(1)
+			.with_priority(1)
+			.mount(&mock)
+			.await;
+		Mock::given(wiremock::matchers::any())
+			.respond_with(ResponseTemplate::new(200))
+			.with_priority(2)
+			.mount(&mock)
+			.await;
+
+		let mut bind = proxymock::base_gateway(&mock);
+		let mut retry = json!({"attempts": 1, "codes": [503]});
+		if let Some(limit) = max_buffer_size {
+			retry["maxBufferSize"] = json!(limit);
+		}
+		bind.attach_route_policy(json!({ "retry": retry })).await;
+		let io = bind.serve_http(proxymock::BIND_KEY);
+
+		let body = vec![b'x'; 128 * 1024];
+		let res = proxymock::send_request_body(io, Method::POST, "http://lo/", &body).await;
+		assert_eq!(res.status(), want_status);
+
+		let received = mock.received_requests().await.expect("request recording");
+		assert_eq!(received.len(), want_requests);
+		// Every attempt, including the replay, carries the full body.
+		assert!(received.iter().all(|r| r.body == body));
 	}
 }
 

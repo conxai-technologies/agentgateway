@@ -703,6 +703,10 @@ func processRetriesPolicy(retry *agentgateway.Retry, basePolicyName string, poli
 		translatedRetry.Condition = string(*retry.Condition)
 	}
 
+	if v := retry.MaxBufferSize; v != nil {
+		translatedRetry.MaxBufferSize = quantityUint32(v)
+	}
+
 	retryPolicy := &api.Policy{
 		Key:  basePolicyName + retryPolicySuffix,
 		Name: TypedResourceFromName(wellknown.AgentgatewayPolicyGVK.Kind, policy),

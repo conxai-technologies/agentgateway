@@ -3453,6 +3453,13 @@ type Retry struct {
 	// this expression evaluates to `true`.
 	// +optional
 	Condition *CELExpression `json:"condition,omitempty"`
+
+	// `maxBufferSize` is the maximum request body size buffered in memory so the
+	// request can be replayed on a retry. Requests with a larger body are sent once
+	// and not retried. If unset, this defaults to `64Ki`. Values above `32Mi` are
+	// clamped to `32Mi`.
+	// +optional
+	MaxBufferSize *ByteSize `json:"maxBufferSize,omitempty"`
 }
 
 // +k8s:enum
